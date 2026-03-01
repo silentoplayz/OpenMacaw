@@ -1,0 +1,8 @@
+export { serversRoutes } from './servers.js';
+export { permissionsRoutes } from './permissions.js';
+export { sessionsRoutes } from './sessions.js';
+export { settingsRoutes } from './settings.js';
+export { activityRoutes } from './activity.js';
+export { chatRoutes } from './chat.js';
+export { executeRoutes } from './execute.js';
+export { ollamaRoutes } from './ollama.js';

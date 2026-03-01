@@ -1,0 +1,92 @@
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+
+export const servers = sqliteTable('servers', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  transport: text('transport').notNull().default('stdio'),
+  command: text('command'),
+  args: text('args'),
+  envVars: text('env_vars'),
+  url: text('url'),
+  enabled: integer('enabled').notNull().default(1),
+  status: text('status').notNull().default('stopped'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const permissions = sqliteTable('permissions', {
+  id: text('id').primaryKey(),
+  serverId: text('server_id').notNull().references(() => servers.id, { onDelete: 'cascade' }),
+  
+  allowedPaths: text('allowed_paths').notNull(),
+  deniedPaths: text('denied_paths').notNull(),
+  pathRead: integer('path_read').notNull().default(0),
+  pathWrite: integer('path_write').notNull().default(0),
+  pathCreate: integer('path_create').notNull().default(0),
+  pathDelete: integer('path_delete').notNull().default(0),
+  pathListDir: integer('path_list_dir').notNull().default(0),
+  
+  bashAllowed: integer('bash_allowed').notNull().default(0),
+  bashAllowedCommands: text('bash_allowed_commands').notNull(),
+  
+  webfetchAllowed: integer('webfetch_allowed').notNull().default(0),
+  webfetchAllowedDomains: text('webfetch_allowed_domains').notNull(),
+  
+  subprocessAllowed: integer('subprocess_allowed').notNull().default(0),
+  networkAllowed: integer('network_allowed').notNull().default(0),
+  
+  maxCallsPerMinute: integer('max_calls_per_minute').notNull().default(30),
+  maxTokensPerCall: integer('max_tokens_per_call').notNull().default(100000),
+  
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  model: text('model').notNull(),
+  systemPrompt: text('system_prompt'),
+  mode: text('mode').notNull().default('build'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const messages = sqliteTable('messages', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull().references(() => sessions.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(),
+  content: text('content').notNull(),
+  toolCalls: text('tool_calls'),
+  toolResults: text('tool_results'),
+  toolCallId: text('tool_call_id'),
+  model: text('model'),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const activityLog = sqliteTable('activity_log', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+  serverId: text('server_id').references(() => servers.id, { onDelete: 'set null' }),
+  toolName: text('tool_name').notNull(),
+  toolInput: text('tool_input'),
+  outcome: text('outcome').notNull(),
+  reason: text('reason'),
+  latency: real('latency'),
+  timestamp: integer('timestamp', { mode: 'timestamp' }).notNull(),
+});
+
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export type Server = typeof servers.$inferSelect;
+export type Permission = typeof permissions.$inferSelect;
+export type Session = typeof sessions.$inferSelect;
+export type Message = typeof messages.$inferSelect;
+export type ActivityLogEntry = typeof activityLog.$inferSelect;
+export type Setting = typeof settings.$inferSelect;

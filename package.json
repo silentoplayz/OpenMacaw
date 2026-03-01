@@ -1,0 +1,29 @@
+{
+  "name": "openmacaw",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted MCP Agent Platform with granular permission control",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "tsx watch packages/server/src/index.ts",
+    "dev:web": "vite packages/web",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p packages/server/tsconfig.json",
+    "build:web": "cd packages/web && npm run build",
+    "start": "node packages/server/dist/index.js",
+    "db:generate": "tsx packages/server/src/db/generate.ts",
+    "db:migrate": "tsx packages/server/src/db/migrate.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "concurrently": "^8.2.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
