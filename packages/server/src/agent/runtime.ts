@@ -22,7 +22,7 @@ export type AgentEvent =
   | { type: 'tool_call_start'; tool: string; server: string; input: Record<string, unknown> }
   | { type: 'tool_call_result'; outcome: 'allowed' | 'denied'; result?: unknown; reason?: string }
   | { type: 'message_end'; usage: { inputTokens: number; outputTokens: number } }
-  | { type: 'proposal'; tool: string; input: Record<string, unknown> }
+  | { type: 'proposal'; id: string; tool: string; input: Record<string, unknown> }
   | { type: 'error'; message: string }
   | { type: 'step_count'; count: number };
 
@@ -37,10 +37,7 @@ export class AgentRuntime {
     this.config = config;
     this.eventHandler = eventHandler;
     this.maxSteps = config.maxSteps || getConfig().MAX_STEPS;
-
-    if (config.systemPrompt) {
-      this.messages.push({ role: 'system', content: config.systemPrompt });
-    }
+    this.messages = [];
   }
 
   private loadHistory(): void {
@@ -49,26 +46,39 @@ export class AgentRuntime {
       .where((getCol: (col: string) => any) => getCol('sessionId') === this.config.sessionId)
       .all() as any[];
 
-    for (const msg of history) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        this.messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+    if (history.length === 0) {
+      if (this.config.systemPrompt) {
+        this.messages = [{ role: 'system', content: this.config.systemPrompt }];
+      }
+      return;
+    }
+
+    this.messages = history.map(msg => ({
+      role: msg.role as Message['role'],
+      content: msg.content,
+      toolCalls: msg.toolCalls,
+      toolCallId: msg.toolCallId,
+    }));
+
+    // Ensure system prompt is at the top
+    if (this.messages.length === 0 || this.messages[0].role !== 'system') {
+      if (this.config.systemPrompt) {
+        this.messages.unshift({ role: 'system', content: this.config.systemPrompt });
       }
     }
 
-    if (history.length > 0) {
-      console.log(`[Agent] Loaded ${history.length} messages from history`);
-    }
+    console.log(`[Agent] Loaded ${history.length} messages from history`);
   }
 
-  async run(userMessage: string): Promise<void> {
-    console.log('[Agent] Received user message:', userMessage.substring(0, 50));
-
+  async run(userMessage?: string): Promise<void> {
     // Load conversation history so Claude has context from previous turns
     this.loadHistory();
 
-    this.messages.push({ role: 'user', content: userMessage });
-
-    await this.saveMessage('user', userMessage);
+    if (userMessage) {
+      console.log('[Agent] Received user message:', userMessage.substring(0, 50));
+      this.messages.push({ role: 'user', content: userMessage });
+      await this.saveMessage('user', userMessage);
+    }
 
     while (this.stepCount < this.maxSteps) {
       const tools = getAllTools();
@@ -77,8 +87,8 @@ export class AgentRuntime {
       const provider = getProviderForModel(this.config.model);
       
       let deltaText = '';
-      
       let interceptedProposal = false;
+      let currentTurnHadToolCall = false;
 
       await provider.chat(
         this.config.model,
@@ -89,13 +99,15 @@ export class AgentRuntime {
             deltaText += delta.content;
             this.eventHandler({ type: 'text_delta', content: delta.content });
           } else if (delta.type === 'tool_use' && delta.toolCall) {
+            currentTurnHadToolCall = true;
             interceptedProposal = await this.handleToolCall(delta.toolCall);
           } else if ((delta as any).type === 'clear_text') {
             deltaText = '';
           } else if (delta.type === 'message_end' && delta.usage) {
             this.eventHandler({ type: 'message_end', usage: delta.usage });
             if (deltaText) {
-              this.saveMessage('assistant', deltaText, delta.usage);
+              await this.saveMessage('assistant', deltaText, delta.usage);
+              this.messages.push({ role: 'assistant', content: deltaText });
             }
           } else if (delta.type === 'error') {
             this.eventHandler({ type: 'error', message: delta.error || 'Unknown error' });
@@ -114,11 +126,7 @@ export class AgentRuntime {
         break;
       }
 
-      const hasToolCalls = this.messages.some(m => 
-        m.role === 'assistant' && 'toolCallId' in m
-      );
-
-      if (!hasToolCalls) {
+      if (!currentTurnHadToolCall) {
         break;
       }
     }
@@ -185,11 +193,19 @@ export class AgentRuntime {
       toolCallId: toolCall.id,
     });
 
-    await this.saveMessage('assistant', `I proposed executing ${toolCall.name} (Waiting for approval).`);
+    const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: `${serverId}:${toolName}`, arguments: toolCall.input }]);
+    await this.saveMessage(
+      'assistant', 
+      `I proposed executing ${serverId}:${toolName} (Waiting for approval).`,
+      undefined,
+      toolCallPayload,
+      toolCall.id
+    );
 
     this.eventHandler({
       type: 'proposal',
-      tool: toolCall.name,
+      id: toolCall.id,
+      tool: `${serverId}:${toolName}`,
       input: toolCall.input,
     });
 
@@ -197,9 +213,11 @@ export class AgentRuntime {
   }
 
   private async saveMessage(
-    role: 'user' | 'assistant',
+    role: 'user' | 'assistant' | 'tool',
     content: string,
-    usage?: { inputTokens: number; outputTokens: number }
+    usage?: { inputTokens: number; outputTokens: number },
+    toolCalls?: string,
+    toolCallId?: string
   ): Promise<void> {
     console.log('[Agent] Saving message:', role, 'content length:', content.length);
     const db = getDb();
@@ -210,6 +228,8 @@ export class AgentRuntime {
       sessionId: this.config.sessionId,
       role,
       content,
+      toolCalls,
+      toolCallId,
       model: role === 'assistant' ? this.config.model : undefined,
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,

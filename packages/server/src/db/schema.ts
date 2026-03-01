@@ -59,6 +59,7 @@ export const messages = sqliteTable('messages', {
   content: text('content').notNull(),
   toolCalls: text('tool_calls'),
   toolResults: text('tool_results'),
+  toolCallId: text('tool_call_id'),
   model: text('model'),
   inputTokens: integer('input_tokens'),
   outputTokens: integer('output_tokens'),

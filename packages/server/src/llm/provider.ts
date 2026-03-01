@@ -9,6 +9,7 @@ export interface Message {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  toolCalls?: string;
 }
 
 export interface ToolCall {

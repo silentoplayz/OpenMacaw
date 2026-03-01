@@ -51,6 +51,26 @@ export class OpenAIProvider implements LLMProvider {
           content: msg.content,
         };
       }
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        try {
+          const parsed = JSON.parse(msg.toolCalls);
+          const toolCalls = Array.isArray(parsed) ? parsed : [parsed];
+          return {
+            role: 'assistant',
+            content: msg.content,
+            tool_calls: toolCalls.map(tc => ({
+              id: msg.toolCallId || 'call_unknown',
+              type: 'function',
+              function: {
+                name: tc.name, // Correct name should already be prefixed in toolCalls string
+                arguments: JSON.stringify(tc.arguments),
+              },
+            })),
+          };
+        } catch (e) {
+          console.error('[OpenAI] Failed to parse historical toolCalls:', e);
+        }
+      }
       return {
         role: msg.role as 'user' | 'assistant',
         content: msg.content,

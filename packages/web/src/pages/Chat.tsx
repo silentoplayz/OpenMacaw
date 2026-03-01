@@ -6,9 +6,14 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch, getWsUrl, type AgentEvent } from '../api';
 
-function ApprovalCard({ toolCalls, onApprove, onReject }: { toolCalls: string, onApprove: () => void, onReject: () => void }) {
+function ApprovalCard({ toolCalls, sessionId, alreadyExecuted, onApprove, onReject }: { toolCalls: string, sessionId?: string | null, alreadyExecuted?: boolean, onApprove: () => void, onReject: () => void }) {
   const [loading, setLoading] = useState(false);
-  const [executed, setExecuted] = useState(false);
+  const [executed, setExecuted] = useState(alreadyExecuted || false);
+  
+  useEffect(() => {
+    if (alreadyExecuted) setExecuted(true);
+  }, [alreadyExecuted]);
+
   let calls: any[] = [];
   try { calls = JSON.parse(toolCalls); } catch (e) {}
   if (!Array.isArray(calls)) calls = [calls];
@@ -22,7 +27,8 @@ function ApprovalCard({ toolCalls, onApprove, onReject }: { toolCalls: string, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           toolCalls: calls,
-          user_approved: true
+          user_approved: true,
+          sessionId
         })
       });
       setExecuted(true);
@@ -69,7 +75,7 @@ function ApprovalCard({ toolCalls, onApprove, onReject }: { toolCalls: string, o
           <button onClick={onReject} disabled={loading} className="flex-1 px-3 py-1.5 bg-black border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded transition-colors disabled:opacity-50">
             Deny
           </button>
-          <button onClick={handleApprove} disabled={loading} className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-[10px] font-bold font-mono uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] disabled:opacity-50 disabled:shadow-none">
+          <button onClick={handleApprove} disabled={loading} className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-[10px] font-bold font-mono uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] disabled:opacity-50 disabled:shadow-none animate-pulse hover:animate-none">
             {loading && <Loader2 className="w-3 h-3 animate-spin inline" />}
             {loading ? 'Executing...' : 'Approve & Execute'}
           </button>
@@ -85,6 +91,7 @@ interface Message {
   content: string;
   toolCalls?: string;
   toolResults?: string;
+  toolCallId?: string;
 }
 
 interface Session {
@@ -93,6 +100,26 @@ interface Session {
   model: string;
   mode: 'build' | 'plan';
   messages: Message[];
+}
+
+function hydrateMessage(msg: Message): Message {
+  if (msg.role === 'assistant' && !msg.toolCalls) {
+    const proposalMatch = msg.content?.match(/I proposed executing (.*?):(.*?) \(Waiting for approval\)\.?/);
+    if (proposalMatch) {
+      const serverId = proposalMatch[1];
+      const toolName = proposalMatch[2];
+      return {
+        ...msg,
+        toolCallId: `${serverId}:${toolName}`, // Use name as ID if missing from content
+        toolCalls: JSON.stringify([{ 
+          id: `${serverId}:${toolName}`,
+          name: `${serverId}:${toolName}`, 
+          arguments: { _status: "Hydrated from history" } 
+        }])
+      };
+    }
+  }
+  return msg;
 }
 
 
@@ -173,6 +200,9 @@ export default function Chat() {
     
     ws.onopen = () => {
       console.log('WebSocket connected');
+      if (currentSessionId) {
+        ws.send(JSON.stringify({ type: 'join', sessionId: currentSessionId }));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -180,9 +210,11 @@ export default function Chat() {
 
       switch (data.type) {
         case 'text_delta':
+          if (!isStreaming) setIsStreaming(true);
           setStreamingContent(prev => prev + (data.content || ''));
           break;
         case 'tool_call_start':
+          if (!isStreaming) setIsStreaming(true);
           setStreamingContent(prev => prev + `\n[Calling tool: ${data.tool}]`);
           break;
         case 'tool_call_result':
@@ -209,10 +241,11 @@ export default function Chat() {
                 messages: [
                   ...old.messages,
                   {
-                    id: `proposal-${Date.now()}`,
+                    id: data.id || `proposal-${Date.now()}`,
                     role: 'assistant',
                     content: `I propose executing ${data.tool}. Please authorize the action.`,
-                    toolCalls: JSON.stringify([{ name: data.tool, arguments: data.input }])
+                    toolCallId: data.id,
+                    toolCalls: JSON.stringify([{ id: data.id, name: data.tool, arguments: data.input }])
                   }
                 ]
               };
@@ -240,22 +273,44 @@ export default function Chat() {
     return ws;
   }, [currentSessionId, queryClient]);
 
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    const ws = connectWebSocket();
+    wsRef.current = ws;
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [currentSessionId, connectWebSocket]);
+
   const sendMessage = () => {
-    if (!input.trim() || !currentSessionId || isStreaming) return;
+    if (!input.trim() || !currentSessionId || isStreaming || !wsRef.current) return;
 
     setIsStreaming(true);
     setStreamingContent('');
 
-    const ws = connectWebSocket();
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
+    if (wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
         type: 'chat',
         sessionId: currentSessionId,
         message: input,
       }));
       setInput('');
-    };
+    } else {
+      // Re-connect and send if closed
+      const ws = connectWebSocket();
+      wsRef.current = ws;
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          type: 'chat',
+          sessionId: currentSessionId,
+          message: input,
+        }));
+        setInput('');
+      };
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -265,7 +320,7 @@ export default function Chat() {
     }
   };
 
-  const allMessages = [...(currentSession?.messages || [])];
+  const allMessages = (currentSession?.messages || []).map(hydrateMessage);
   if (isStreaming) {
     allMessages.push({
       id: 'streaming',
@@ -327,44 +382,58 @@ export default function Chat() {
               [System] Ready for input
             </div>
           ) : (
-            allMessages.map(msg => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-2xl px-3 py-2 rounded-md ${
-                    msg.role === 'user'
-                      ? 'bg-zinc-800 text-gray-200 border border-white/5'
-                      : msg.role === 'tool'
-                      ? 'bg-zinc-950 text-gray-400 border border-white/5 font-mono text-xs'
-                      : 'bg-transparent text-gray-300'
-                  }`}
-                >
-                  {msg.role === 'user' || msg.role === 'tool' ? (
-                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                  ) : (
-                    <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-sm prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-white/5 prose-pre:text-gray-300">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
-                  )}
+            allMessages.map((msg, index) => {
+              const isProposal = msg.role === 'assistant' && msg.toolCalls;
+              
+              if (isProposal) {
+                const alreadyExecuted = allMessages.slice(index + 1).some(m => m.role === 'tool');
 
-                  {msg.toolCalls && (
-                    <ApprovalCard 
-                      toolCalls={msg.toolCalls} 
-                      onApprove={() => { /* Real approval logic hides the card or displays executed, implemented natively via state in ApprovalCard */}} 
-                      onReject={() => { 
-                         // To "Deny", for now, we just skip it or refresh state. 
-                         // To fully deny we might inform the LLM in next task. 
-                         alert('Execution denied by user');
-                      }} 
-                    />
-                  )}
+                return (
+                  <div key={msg.id} className="flex justify-center w-full my-6">
+                    <div className="w-full max-w-md">
+                      <ApprovalCard 
+                        toolCalls={msg.toolCalls!} 
+                        sessionId={currentSessionId}
+                        alreadyExecuted={alreadyExecuted}
+                        onApprove={() => { 
+                          queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
+                        }} 
+                        onReject={() => { alert('Execution denied by user'); }} 
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-2xl px-3 py-2 rounded-md ${
+                      msg.role === 'user'
+                        ? 'bg-zinc-800 text-gray-200 border border-white/5'
+                        : msg.role === 'tool'
+                        ? 'bg-zinc-950 text-gray-400 border border-white/5 font-mono text-xs'
+                        : 'bg-transparent text-gray-300'
+                    }`}
+                  >
+                    {msg.role === 'user' || msg.role === 'tool' ? (
+                      <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    ) : (
+                      !msg.toolCalls && (
+                        <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-sm prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-white/5 prose-pre:text-gray-300">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      )
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
           <div ref={messagesEndRef} />
         </div>

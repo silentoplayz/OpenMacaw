@@ -3,13 +3,29 @@ import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
 import { getConfig } from '../config.js';
 
-const chatSchema = z.object({
-  type: z.literal('chat'),
-  sessionId: z.string(),
-  message: z.string(),
-  model: z.string().optional(),
-  mode: z.enum(['build', 'plan']).optional(),
-});
+const chatSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('chat'),
+    sessionId: z.string(),
+    message: z.string(),
+    model: z.string().optional(),
+    mode: z.enum(['build', 'plan']).optional(),
+  }),
+  z.object({
+    type: z.literal('join'),
+    sessionId: z.string(),
+  })
+]);
+
+// Registry to track active WebSocket connections for each session
+export const socketRegistry = new Map<string, (event: AgentEvent) => void>();
+
+export function broadcastToSession(sessionId: string, event: AgentEvent) {
+  const handler = socketRegistry.get(sessionId);
+  if (handler) {
+    handler(event);
+  }
+}
 
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/ws/chat', { websocket: true }, (socket, _request) => {
@@ -27,11 +43,14 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     socket.on('message', async (data) => {
       console.log('[WebSocket] Received message');
       try {
-        const message = JSON.parse(data.toString());
+        const parsed = chatSchema.parse(JSON.parse(data.toString()));
 
-        if (message.type === 'chat') {
-          const { sessionId, message: userMessage, model, mode } = chatSchema.parse(message);
+        if (parsed.type === 'chat') {
+          const { sessionId, message: userMessage, model, mode } = parsed;
           console.log('[WebSocket] Chat message:', userMessage.substring(0, 50), 'session:', sessionId);
+
+          // Register this socket for the session
+          socketRegistry.set(sessionId, sendEvent);
 
           const session = getSession(sessionId);
           if (!session) {
@@ -54,6 +73,10 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             sendEvent
           ).run(userMessage);
 
+        } else if (parsed.type === 'join') {
+          const { sessionId } = parsed;
+          console.log('[WebSocket] Join session:', sessionId);
+          socketRegistry.set(sessionId, sendEvent);
         } else {
           console.log('[WebSocket] Unknown message type');
           sendEvent({ type: 'error', message: 'Unknown message type' });
@@ -67,6 +90,13 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
     socket.on('close', () => {
       console.log('[WebSocket] Connection closed');
+      // Clean up registry
+      for (const [sid, handler] of socketRegistry.entries()) {
+        if (handler === sendEvent) {
+          socketRegistry.delete(sid);
+          break;
+        }
+      }
     });
   });
 

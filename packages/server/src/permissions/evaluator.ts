@@ -93,7 +93,10 @@ function evaluateFilesystemPermission(
     return { allowed: false, reason: `Path ${path} is explicitly denied` };
   }
 
-  if (!perm.allowedPaths.some(ap => normalizedPath.startsWith(ap.replace(/\\/g, '/'))) && perm.allowedPaths.length > 0) {
+  // If '/' is in allowedPaths, consider everything explicitly allowed globally
+  const isGloballyAllowed = perm.allowedPaths.some(ap => ap === '/');
+  
+  if (!isGloballyAllowed && !perm.allowedPaths.some(ap => normalizedPath.startsWith(ap.replace(/\\/g, '/'))) && perm.allowedPaths.length > 0) {
     return { allowed: false, reason: `Path ${path} is not in allowed paths` };
   }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -255,6 +255,13 @@ function App() {
   const location = useLocation();
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
   const [executionLogs, setExecutionLogs] = useState<{ id: string, time: string, message: string, type: 'info' | 'success' | 'error' }[]>([]);
+  const inspectorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (inspectorRef.current) {
+      inspectorRef.current.scrollTop = inspectorRef.current.scrollHeight;
+    }
+  }, [executionLogs]);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -393,7 +400,10 @@ function App() {
             <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">Inspector</span>
             <Activity className="w-3.5 h-3.5 text-gray-500" />
           </div>
-          <div className="flex-1 p-3 font-mono text-[11px] text-gray-500 overflow-y-auto space-y-2 selection:bg-cyan-900/40">
+          <div 
+            ref={inspectorRef}
+            className="flex-1 p-3 font-mono text-[11px] text-gray-500 overflow-y-auto space-y-2 selection:bg-cyan-900/40"
+          >
             {executionLogs.length === 0 ? (
               <>
                 <div className="flex gap-2">

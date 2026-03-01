@@ -52,6 +52,30 @@ export class AnthropicProvider implements LLMProvider {
           ]
         };
       }
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        try {
+          const parsed = JSON.parse(msg.toolCalls);
+          const toolCalls = Array.isArray(parsed) ? parsed : [parsed];
+          const content: any[] = [];
+          
+          if (msg.content) {
+            content.push({ type: 'text', text: msg.content });
+          }
+
+          for (const tc of toolCalls) {
+            content.push({
+              type: 'tool_use',
+              id: msg.toolCallId || `call_${Date.now()}`,
+              name: tc.name,
+              input: tc.arguments as any,
+            });
+          }
+
+          return { role: 'assistant', content };
+        } catch (e) {
+          console.error('[Anthropic] Failed to parse historical toolCalls:', e);
+        }
+      }
       return {
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
