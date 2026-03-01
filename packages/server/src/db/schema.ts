@@ -37,7 +37,9 @@ export const permissions = sqliteTable('permissions', {
   
   maxCallsPerMinute: integer('max_calls_per_minute').notNull().default(30),
   maxTokensPerCall: integer('max_tokens_per_call').notNull().default(100000),
-  
+  // Prompt-injection prevention toggle (false by default)
+  promptInjectionPrevention: integer('prompt_injection_prevention').notNull().default(0),
+
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

@@ -28,6 +28,7 @@ export async function permissionsRoutes(fastify: FastifyInstance): Promise<void>
     if (typeof body.pathListDir === 'boolean') updates.pathListDir = body.pathListDir;
     if (typeof body.bashAllowed === 'boolean') updates.bashAllowed = body.bashAllowed;
     if (Array.isArray(body.bashAllowedCommands)) updates.bashAllowedCommands = body.bashAllowedCommands;
+    if (typeof (body as any).promptInjectionPrevention === 'boolean') updates.promptInjectionPrevention = (body as any).promptInjectionPrevention;
     if (typeof body.webfetchAllowed === 'boolean') updates.webfetchAllowed = body.webfetchAllowed;
     if (Array.isArray(body.webfetchAllowedDomains)) updates.webfetchAllowedDomains = body.webfetchAllowedDomains;
     if (typeof body.subprocessAllowed === 'boolean') updates.subprocessAllowed = body.subprocessAllowed;
@@ -69,6 +70,7 @@ export async function permissionsRoutes(fastify: FastifyInstance): Promise<void>
     if (Array.isArray(body.webfetchAllowedDomains)) updates.webfetchAllowedDomains = body.webfetchAllowedDomains;
     if (typeof body.subprocessAllowed === 'boolean') updates.subprocessAllowed = body.subprocessAllowed;
     if (typeof body.networkAllowed === 'boolean') updates.networkAllowed = body.networkAllowed;
+    if (typeof (body as any).promptInjectionPrevention === 'boolean') updates.promptInjectionPrevention = (body as any).promptInjectionPrevention;
     
     const updated = await updatePermission(serverId, updates as any);
     return reply.send(updated);

@@ -19,6 +19,8 @@ export interface ServerPermission {
   networkAllowed: boolean;
   maxCallsPerMinute: number;
   maxTokensPerCall: number;
+  // Optional: per-server prompt-injection prevention toggle (default: false)
+  promptInjectionPrevention?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +51,7 @@ export function getPermissionForServer(serverId: string): ServerPermission | nul
     networkAllowed: Boolean(perm.networkAllowed),
     maxCallsPerMinute: perm.maxCallsPerMinute,
     maxTokensPerCall: perm.maxTokensPerCall,
+    promptInjectionPrevention: Boolean((perm as any).prompt_injection_prevention ?? (perm as any).promptInjectionPrevention ?? false),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   };
@@ -77,6 +80,7 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     network_allowed: 1,
     max_calls_per_minute: 30,
     max_tokens_per_call: 100000,
+    prompt_injection_prevention: 0,
     created_at: now,
     updated_at: now,
   };
@@ -102,6 +106,7 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     maxTokensPerCall: 100000,
     createdAt: new Date(now),
     updatedAt: new Date(now),
+    promptInjectionPrevention: false,
   } as ServerPermission;
 }
 
@@ -124,6 +129,9 @@ export async function updatePermission(serverId: string, updates: Partial<Server
   if (updates.networkAllowed !== undefined) dbUpdates.network_allowed = updates.networkAllowed ? 1 : 0;
   if (updates.maxCallsPerMinute !== undefined) dbUpdates.max_calls_per_minute = updates.maxCallsPerMinute;
   if (updates.maxTokensPerCall !== undefined) dbUpdates.max_tokens_per_call = updates.maxTokensPerCall;
+  if ((updates as any).promptInjectionPrevention !== undefined) {
+    dbUpdates.prompt_injection_prevention = (updates as any).promptInjectionPrevention ? 1 : 0;
+  }
 
   db.update(schema.permissions as any).set(dbUpdates).where((getCol: (col: string) => unknown) => getCol('serverId') === serverId);
   
@@ -159,6 +167,7 @@ export function getAllPermissions(): ServerPermission[] {
     networkAllowed: Boolean(perm.networkAllowed),
     maxCallsPerMinute: perm.maxCallsPerMinute,
     maxTokensPerCall: perm.maxTokensPerCall,
+    promptInjectionPrevention: Boolean((perm as any).prompt_injection_prevention ?? (perm as any).promptInjectionPrevention ?? false),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   }));
