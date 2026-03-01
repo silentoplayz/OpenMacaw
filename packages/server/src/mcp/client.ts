@@ -36,12 +36,42 @@ export class MCPClient {
       }
     }
 
-    // Handle linux env command resolution implicitly by trying `which` if command lacks a slash
-    if (!command.includes('/') && !command.includes('\\')) {
+    // Handle command resolution - try to find the executable
+    // Only resolve if the command doesn't contain path separators
+    if (!command.includes('/') && !command.includes('\\') && !command.includes(':')) {
+      const isWindows = process.platform === 'win32';
+      
       try {
-        command = execSync(`which ${command}`, { encoding: 'utf-8', env }).trim();
+        let resolved = '';
+        
+        if (isWindows) {
+          // Windows: use `where` command
+          const result = execSync(`where ${command}`, { encoding: 'utf-8', env });
+          // Take first result (could be .cmd, .bat, or .exe)
+          resolved = result.trim().split('\n')[0];
+          
+          // If npx.cmd exists, use that specifically
+          if (command === 'npx' && resolved.includes('npx.cmd')) {
+            // npx.cmd is good
+          } else if (resolved.endsWith('.exe') && !resolved.endsWith('.cmd')) {
+            // For .exe files, also check for .cmd version as it's more reliable
+            try {
+              const cmdVersion = execSync(`where ${command}.cmd`, { encoding: 'utf-8', env }).trim().split('\n')[0];
+              if (cmdVersion && !cmdVersion.includes('not found')) {
+                resolved = cmdVersion;
+              }
+            } catch { /* Use exe version */ }
+          }
+        } else {
+          // Unix: use `which` command
+          resolved = execSync(`which ${command}`, { encoding: 'utf-8', env }).trim();
+        }
+        
+        if (resolved && !resolved.includes('not found') && resolved.length > 0) {
+          command = resolved;
+        }
       } catch {
-        // Fallback to exactly what the user provided if not found, child process will fail natively
+        // Fallback to exactly what the user provided if not found
       }
     }
 

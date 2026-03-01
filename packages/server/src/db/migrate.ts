@@ -43,7 +43,8 @@ sqlite.exec(`
     subprocess_allowed INTEGER NOT NULL DEFAULT 0,
     network_allowed INTEGER NOT NULL DEFAULT 0,
     max_calls_per_minute INTEGER NOT NULL DEFAULT 30,
-    max_tokens_per_call INTEGER NOT NULL DEFAULT 100000,
+  max_tokens_per_call INTEGER NOT NULL DEFAULT 100000,
+  prompt_injection_prevention INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );

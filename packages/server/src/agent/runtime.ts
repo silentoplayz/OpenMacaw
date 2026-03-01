@@ -53,12 +53,29 @@ export class AgentRuntime {
       return;
     }
 
-    this.messages = history.map(msg => ({
+    const raw: Message[] = history.map(msg => ({
       role: msg.role as Message['role'],
       content: msg.content,
       toolCalls: msg.toolCalls,
       toolCallId: msg.toolCallId,
     }));
+
+    // Collect all tool_use IDs that exist in assistant messages so we can
+    // drop orphaned tool_result blocks that have no matching tool_use.
+    const toolUseIds = new Set<string>();
+    for (const msg of raw) {
+      if (msg.role === 'assistant' && msg.toolCallId) {
+        toolUseIds.add(msg.toolCallId);
+      }
+    }
+
+    this.messages = raw.filter(msg => {
+      if (msg.role === 'tool' && msg.toolCallId && !toolUseIds.has(msg.toolCallId)) {
+        console.warn(`[Agent] Dropping orphaned tool_result for toolCallId ${msg.toolCallId}`);
+        return false;
+      }
+      return true;
+    });
 
     // Ensure system prompt is at the top
     if (this.messages.length === 0 || this.messages[0].role !== 'system') {
@@ -67,7 +84,7 @@ export class AgentRuntime {
       }
     }
 
-    console.log(`[Agent] Loaded ${history.length} messages from history`);
+    console.log(`[Agent] Loaded ${history.length} messages from history (${this.messages.length} after filtering)`);
   }
 
   async run(userMessage?: string): Promise<void> {
@@ -105,7 +122,12 @@ export class AgentRuntime {
             deltaText = '';
           } else if (delta.type === 'message_end' && delta.usage) {
             this.eventHandler({ type: 'message_end', usage: delta.usage });
-            if (deltaText) {
+            // Only save text if there was NO tool call this turn.
+            // When there IS a tool call, handleToolCall already saves the proposal
+            // as the single assistant message for this turn. Saving a second
+            // assistant message would create an invalid consecutive-assistant
+            // sequence that the Anthropic API rejects.
+            if (deltaText && !currentTurnHadToolCall) {
               await this.saveMessage('assistant', deltaText, delta.usage);
               this.messages.push({ role: 'assistant', content: deltaText });
             }
@@ -193,10 +215,10 @@ export class AgentRuntime {
       toolCallId: toolCall.id,
     });
 
-    const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: `${serverId}:${toolName}`, arguments: toolCall.input }]);
+    const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: `${serverId}__${toolName}`, arguments: toolCall.input }]);
     await this.saveMessage(
       'assistant', 
-      `I proposed executing ${serverId}:${toolName} (Waiting for approval).`,
+      `I proposed executing ${serverId}__${toolName} (Waiting for approval).`,
       undefined,
       toolCallPayload,
       toolCall.id

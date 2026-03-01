@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, FolderOpen, Terminal, Globe, Network, X } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, Loader2, FolderOpen, Terminal, Globe, Network, X, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useState, useMemo } from 'react';
 import { apiFetch } from '../api';
 
 interface Permission {
@@ -22,6 +22,8 @@ interface Permission {
   networkAllowed: boolean;
   maxCallsPerMinute: number;
   maxTokensPerCall: number;
+  promptInjectionPrevention?: boolean;
+  toolPromptInjectionPrevention: Record<string, 'inherit' | 'enable' | 'disable'>;
 }
 
 export default function Permissions() {
@@ -42,6 +44,22 @@ export default function Permissions() {
     enabled: !!serverId,
   });
 
+  interface Tool {
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }
+
+  const { data: tools = [] } = useQuery<Tool[]>({
+    queryKey: ['server-tools', serverId],
+    queryFn: async () => {
+      const res = await apiFetch(`/api/servers/${serverId}/tools`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!serverId,
+  });
+
   const updateMutation = useMutation({
     mutationFn: async (updates: Partial<Permission>) => {
       const res = await apiFetch(`/api/permissions/${serverId}`, {
@@ -50,6 +68,23 @@ export default function Permissions() {
         body: JSON.stringify(updates),
       });
       if (!res.ok) throw new Error('Failed to update permissions');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['permission', serverId] });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    },
+  });
+
+  const updateToolPipMutation = useMutation({
+    mutationFn: async ({ toolName, override }: { toolName: string; override: 'inherit' | 'enable' | 'disable' }) => {
+      const res = await apiFetch(`/api/permissions/${serverId}/tool-pip/${toolName}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override }),
+      });
+      if (!res.ok) throw new Error('Failed to update tool PIP override');
       return res.json();
     },
     onSuccess: () => {
@@ -129,6 +164,29 @@ export default function Permissions() {
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Permissions Audit & Control</h1>
         {saveStatus === 'saving' && <Loader2 className="w-5 h-5 animate-spin text-gray-400" />}
         {saveStatus === 'saved' && <span className="text-green-600 dark:text-green-400 text-sm font-medium pr-2">Saved!</span>}
+      </div>
+
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 rounded-lg border border-amber-200 dark:border-amber-800 p-4 mb-6">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Prompt Injection Prevention (PIP)</h2>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={permission.promptInjectionPrevention ?? false}
+                  onChange={(e) => updateMutation.mutate({ promptInjectionPrevention: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
+              </label>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+              When enabled, all tool calls from this server pass through an injection detection pipeline including canary leak checks, sanitizer, step verifier, and final verifier. May pause execution for human confirmation on suspicious inputs.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -382,6 +440,52 @@ export default function Permissions() {
             </div>
           </div>
         </div>
+
+        {tools.length > 0 && (
+          <div className="bg-white dark:bg-zinc-900/50 rounded-lg border border-gray-200 dark:border-white/10 p-4 shadow-sm col-span-2">
+            <div className="flex items-center gap-2 mb-4">
+              <ShieldCheck className="w-5 h-5 text-amber-500" />
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Tool-Specific PIP Overrides</h2>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Override Prompt Injection Prevention settings for individual tools. "Inherit" uses the server-wide setting above.
+            </p>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {tools.map((tool) => {
+                const override = permission.toolPromptInjectionPrevention?.[tool.name] || 'inherit';
+                return (
+                  <div key={tool.name} className="flex items-center justify-between px-3 py-2.5 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-100 dark:border-white/5">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-mono text-gray-900 dark:text-gray-200 block truncate">{tool.name}</span>
+                      {tool.description && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">{tool.description}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 ml-2">
+                      {(['inherit', 'enable', 'disable'] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          onClick={() => updateToolPipMutation.mutate({ toolName: tool.name, override: opt })}
+                          className={`px-2 py-1 text-xs rounded transition-colors ${
+                            override === opt
+                              ? opt === 'inherit' 
+                                ? 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                                : opt === 'enable'
+                                  ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                  : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                              : 'bg-gray-100 text-gray-500 dark:bg-zinc-800 dark:text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

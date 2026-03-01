@@ -103,6 +103,7 @@ export class AnthropicProvider implements LLMProvider {
     });
 
     let currentToolCall: { id: string; name: string; input: Record<string, unknown> } | null = null;
+    let currentToolInputBuffer = '';
 
     for await (const chunk of stream) {
       if (chunk.type === 'message_start') {
@@ -114,6 +115,7 @@ export class AnthropicProvider implements LLMProvider {
             name: chunk.content_block.name,
             input: {},
           };
+          currentToolInputBuffer = '';
         }
       } else if (chunk.type === 'content_block_delta') {
         if (chunk.delta.type === 'text_delta') {
@@ -123,21 +125,26 @@ export class AnthropicProvider implements LLMProvider {
           });
         } else if (chunk.delta.type === 'input_json_delta') {
           if (currentToolCall) {
-            try {
-              const parsed = JSON.parse(chunk.delta.partial_json);
-              currentToolCall.input = { ...currentToolCall.input, ...parsed };
-            } catch {
-              // Accumulate partial JSON
-            }
+            // Accumulate partial JSON — do NOT parse each chunk individually
+            currentToolInputBuffer += chunk.delta.partial_json;
           }
         }
       } else if (chunk.type === 'content_block_stop') {
         if (currentToolCall) {
+          // Parse the fully accumulated JSON input
+          try {
+            if (currentToolInputBuffer.trim()) {
+              currentToolCall.input = JSON.parse(currentToolInputBuffer);
+            }
+          } catch (e) {
+            console.error('[Anthropic] Failed to parse tool input JSON:', currentToolInputBuffer, e);
+          }
           onDelta({
             type: 'tool_use',
             toolCall: { ...currentToolCall },
           });
           currentToolCall = null;
+          currentToolInputBuffer = '';
         }
       } else if (chunk.type === 'message_delta') {
         outputTokens = chunk.usage.output_tokens;

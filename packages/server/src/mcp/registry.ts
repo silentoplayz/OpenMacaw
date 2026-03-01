@@ -119,9 +119,12 @@ export function getAllTools(): ToolDefinition[] {
   for (const [, server] of servers) {
     if (server.client.isConnected()) {
       for (const tool of server.client.getTools()) {
+        // Encode server ID + tool name into a valid API name.
+        // Claude's tool name pattern: ^[a-zA-Z0-9_-]{1,128}$ — no colons allowed.
+        // We use double-underscore as separator: "SERVERID__toolname"
         allTools.push({
           ...tool,
-          name: `${server.info.id}:${tool.name}`,
+          name: `${server.info.id}__${tool.name}`,
         });
       }
     }

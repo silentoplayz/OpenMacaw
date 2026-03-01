@@ -202,6 +202,16 @@ function matchesGlob(str: string, pattern: string): boolean {
 }
 
 export function extractServerIdFromToolName(fullToolName: string): { serverId: string; toolName: string } {
+  // Support both legacy colon separator and the double-underscore encoding
+  // used when sending tools to the LLM API (which forbids colons).
+  const dunderIndex = fullToolName.indexOf('__');
+  if (dunderIndex !== -1) {
+    return {
+      serverId: fullToolName.substring(0, dunderIndex),
+      toolName: fullToolName.substring(dunderIndex + 2),
+    };
+  }
+  // Fallback: legacy colon format
   const colonIndex = fullToolName.indexOf(':');
   if (colonIndex === -1) {
     return { serverId: '', toolName: fullToolName };

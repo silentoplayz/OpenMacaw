@@ -16,7 +16,8 @@ import {
   activityRoutes,
   chatRoutes,
   executeRoutes,
-  ollamaRoutes
+  ollamaRoutes,
+  registryRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +40,7 @@ async function buildApp() {
   await fastify.register(chatRoutes);
   await fastify.register(executeRoutes);
   await fastify.register(ollamaRoutes);
+  await fastify.register(registryRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');
