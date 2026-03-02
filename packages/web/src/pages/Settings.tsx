@@ -106,7 +106,7 @@ export default function Settings() {
                 value={formData.ANTHROPIC_API_KEY || ''}
                 onChange={(e) => setFormData({ ...formData, ANTHROPIC_API_KEY: e.target.value })}
                 placeholder="sk-ant-..."
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono text-sm"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono text-sm"
               />
             </div>
             <div>
@@ -116,7 +116,7 @@ export default function Settings() {
                 value={formData.OPENAI_API_KEY || ''}
                 onChange={(e) => setFormData({ ...formData, OPENAI_API_KEY: e.target.value })}
                 placeholder="sk-..."
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono text-sm"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono text-sm"
               />
             </div>
             <div>
@@ -126,7 +126,7 @@ export default function Settings() {
                 value={formData.OLLAMA_BASE_URL || ''}
                 onChange={(e) => setFormData({ ...formData, OLLAMA_BASE_URL: e.target.value })}
                 placeholder="http://localhost:11434"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono text-sm"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono text-sm"
               />
             </div>
           </div>
@@ -140,7 +140,7 @@ export default function Settings() {
               <select
                 value={formData.DEFAULT_PROVIDER || 'anthropic'}
                 onChange={(e) => setFormData({ ...formData, DEFAULT_PROVIDER: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
               >
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI</option>
@@ -165,7 +165,7 @@ export default function Settings() {
                 <select
                   value={formData.DEFAULT_MODEL || ''}
                   onChange={(e) => setFormData({ ...formData, DEFAULT_MODEL: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
                 >
                   <option value="">Select a model...</option>
                   {availableModels.map(model => (
@@ -178,7 +178,7 @@ export default function Settings() {
                   value={formData.DEFAULT_MODEL || ''}
                   onChange={(e) => setFormData({ ...formData, DEFAULT_MODEL: e.target.value })}
                   placeholder="claude-3-5-sonnet-20241022"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
                 />
               )}
             </div>
@@ -188,7 +188,7 @@ export default function Settings() {
                 type="number"
                 value={formData.MAX_STEPS || '50'}
                 onChange={(e) => setFormData({ ...formData, MAX_STEPS: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
               />
             </div>
             <div>
@@ -200,7 +200,7 @@ export default function Settings() {
                 max="2"
                 value={formData.TEMPERATURE || '1.0'}
                 onChange={(e) => setFormData({ ...formData, TEMPERATURE: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
               />
             </div>
           </div>
@@ -213,7 +213,7 @@ export default function Settings() {
             onChange={(e) => setFormData({ ...formData, SYSTEM_PROMPT: e.target.value })}
             placeholder="You are a helpful AI assistant..."
             rows={6}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="w-full px-3 py-2 border border-white/10 bg-zinc-900 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono text-sm"
           />
         </div>
       </div>

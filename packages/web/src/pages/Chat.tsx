@@ -432,6 +432,12 @@ export default function Chat() {
             allMessages.map((msg, index) => {
               const isProposal = msg.role === 'assistant' && msg.toolCalls;
               
+              // Hide raw tool results from the chat feed entirely.
+              // The user sees: [User Prompt] -> [ApprovalCard] -> [LLM Summary]
+              if (msg.role === 'tool' || msg.role === 'system') {
+                return null;
+              }
+
               if (isProposal) {
                 const alreadyExecuted = allMessages.slice(index + 1).some(m => m.role === 'tool');
 
@@ -461,16 +467,14 @@ export default function Chat() {
                     className={`max-w-2xl px-3 py-2 rounded-md ${
                       msg.role === 'user'
                         ? 'bg-zinc-800 text-gray-200 border border-white/5'
-                        : msg.role === 'tool'
-                        ? 'bg-zinc-950 text-gray-400 border border-white/5 font-mono text-xs'
                         : 'bg-transparent text-gray-300'
                     }`}
                   >
-                    {msg.role === 'user' || msg.role === 'tool' ? (
+                    {msg.role === 'user' ? (
                       <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                     ) : (
                       !msg.toolCalls && (
-                        <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-sm prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-white/5 prose-pre:text-gray-300">
+                        <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-cyan-300 prose-code:font-mono prose-code:text-xs prose-pre:bg-black prose-pre:border prose-pre:border-white/10 prose-pre:rounded-md prose-pre:text-gray-300 prose-pre:p-3 prose-a:text-cyan-400 prose-strong:text-white prose-blockquote:border-cyan-500/30 prose-blockquote:text-gray-400">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {msg.content}
                           </ReactMarkdown>
