@@ -24,7 +24,12 @@ export type AgentEvent =
   | { type: 'message_end'; usage: { inputTokens: number; outputTokens: number } }
   | { type: 'proposal'; id: string; tool: string; input: Record<string, unknown> }
   | { type: 'error'; message: string }
-  | { type: 'step_count'; count: number };
+  | { type: 'step_count'; count: number }
+  | { type: 'pipeline_stage'; stage: string }
+  | { type: 'canary_leak_detected'; step: string }
+  | { type: 'sanitizer_flagged'; strippedSegments: string[] }
+  | { type: 'step_verified'; stepId: string; confidence: number; passed: boolean; anomalies: string[] }
+  | { type: 'pipeline_halted'; reason: string; anomalies: string[] };
 
 export class AgentRuntime {
   private config: AgentConfig;

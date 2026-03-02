@@ -68,10 +68,10 @@ export async function runFinalVerifier(
         {
             originalIntent,
             planGoal: plan.goal,
-            plannedSteps: plan.steps.map((s: { id: string; description: string; toolRequired: string | null }) => ({
+            plannedSteps: plan.steps.map((s: { id: string; description: string; toolName?: string }) => ({
                 id: s.id,
                 description: s.description,
-                toolRequired: s.toolRequired,
+                toolRequired: s.toolName ?? null,
             })),
             executionResult: sanitizedOutput.clean,
             sanitizerStrippedSegments: sanitizedOutput.strippedSegments,

@@ -151,8 +151,8 @@ export async function interceptToolCallAsync(
       const fullName = `${serverId}:${td.name}`;
       return fullName === toolCall.name || td.name === toolName;
     });
-    if (match && typeof match.promptInjectionPrevention === 'boolean') {
-      perToolFlag = !!match.promptInjectionPrevention;
+    if (match && typeof (match as any).promptInjectionPrevention === 'boolean') {
+      perToolFlag = !!(match as any).promptInjectionPrevention;
     }
   } catch {
     // ignore

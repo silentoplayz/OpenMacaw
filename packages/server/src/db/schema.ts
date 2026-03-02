@@ -82,6 +82,15 @@ export const activityLog = sqliteTable('activity_log', {
   timestamp: integer('timestamp', { mode: 'timestamp' }).notNull(),
 });
 
+export const pipelineLog = sqliteTable('pipeline_log', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull().references(() => sessions.id, { onDelete: 'cascade' }),
+  event: text('event').notNull(),
+  severity: text('severity').notNull(),
+  details: text('details'),
+  timestamp: integer('timestamp', { mode: 'timestamp' }).notNull(),
+});
+
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
@@ -93,4 +102,5 @@ export type Permission = typeof permissions.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
+export type PipelineLogEntry = typeof pipelineLog.$inferSelect;
 export type Setting = typeof settings.$inferSelect;

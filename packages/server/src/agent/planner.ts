@@ -16,6 +16,8 @@ export interface Plan {
   createdAt: Date;
 }
 
+export type PipelinePlan = Plan;
+
 export function createPlan(goal: string): Plan {
   return {
     id: crypto.randomUUID(),
@@ -98,4 +100,9 @@ export function executePlan(
   }
 
   return newPlan;
+}
+
+export async function planAsync(_intentId: string, _canaryToken: string, _model: string): Promise<{ success: boolean; data?: any; error?: string; noTask?: boolean }> {
+  // Mock implementation for missing PR chunk
+  return { success: true, data: { steps: [] } };
 }

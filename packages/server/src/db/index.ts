@@ -7,6 +7,7 @@ interface DataStore {
   sessions: Record<string, unknown>[];
   messages: Record<string, unknown>[];
   activity_log: Record<string, unknown>[];
+  pipeline_log: Record<string, unknown>[];
   settings: Record<string, unknown>[];
 }
 
@@ -16,6 +17,7 @@ let store: DataStore = {
   sessions: [],
   messages: [],
   activity_log: [],
+  pipeline_log: [],
   settings: [],
 };
 
@@ -33,6 +35,7 @@ function loadStore(): void {
         sessions: [],
         messages: [],
         activity_log: [],
+        pipeline_log: [],
         settings: [],
       };
     }
@@ -150,5 +153,6 @@ export const schema = {
   sessions: 'sessions',
   messages: 'messages',
   activityLog: 'activity_log',
+  pipelineLog: 'pipeline_log',
   settings: 'settings',
 };
