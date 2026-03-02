@@ -3,7 +3,7 @@ import type { ToolDefinition } from '../llm/provider.js';
 import { getDb, schema } from '../db/index.js';
 import { getPermissionForServer, createDefaultPermission } from '../permissions/index.js';
 
-export type ServerStatus = 'stopped' | 'running' | 'error' | 'unhealthy';
+export type ServerStatus = 'stopped' | 'running' | 'error' | 'unhealthy' | 'paused';
 
 export interface MCPServerInfo {
   id: string;
@@ -138,6 +138,23 @@ export async function removeServer(id: string): Promise<void> {
     await server.client.disconnect();
     servers.delete(id);
   }
+}
+
+export async function pauseAllServers(): Promise<void> {
+  const promises = [];
+  for (const [id, server] of servers) {
+    if (server.client.isConnected()) {
+      promises.push(
+        server.client.disconnect().then(() => {
+          server.info.status = 'paused';
+          server.info.toolCount = 0;
+        }).catch(err => {
+          console.error(`[MCP] Failed to pause server ${id}:`, err);
+        })
+      );
+    }
+  }
+  await Promise.all(promises);
 }
 
 export async function restoreConnections(): Promise<void> {

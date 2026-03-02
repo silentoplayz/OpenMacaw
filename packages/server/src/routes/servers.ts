@@ -2,8 +2,9 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { getDb, schema } from '../db/index.js';
-import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools } from '../mcp/index.js';
+import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools, pauseAllServers } from '../mcp/index.js';
 import { createDefaultPermission } from '../permissions/index.js';
+import { activeStreams } from '../agent/runtime.js';
 
 const serverSchema = z.object({
   name: z.string().min(1),
@@ -190,5 +191,20 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = request.params;
     const tools = getServerTools(id);
     return reply.send(tools);
+  });
+
+  fastify.post('/api/mcp/halt', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // 1. Terminate active LLM streams immediately
+      activeStreams.forEach(controller => controller.abort());
+      
+      // 2. Disconnect and pause all running MCP servers
+      await pauseAllServers();
+      
+      return reply.send({ success: true, message: 'System halted successfully' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to halt system';
+      return reply.code(500).send({ error: message });
+    }
   });
 }

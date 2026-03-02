@@ -4,11 +4,12 @@ export {
   startServer, 
   stopServer, 
   getAllServers, 
-  getServerTools, 
+  getMCPServer, 
+  restoreConnections, 
+  removeServer, 
+  getServerTools,
   getAllTools,
-  removeServer,
-  getMCPServer,
-  restoreConnections,
+  pauseAllServers,
   migrateServerArguments
 } from './registry.js';
 export type { MCPServerInfo, ServerStatus } from './registry.js';

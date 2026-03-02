@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, Trash2, Loader2 } from 'lucide-react';
+import { Send, Trash2, Loader2, ShieldCheck } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch, getWsUrl, type AgentEvent } from '../api';
@@ -130,6 +130,9 @@ export default function Chat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [mockMessages, setMockMessages] = useState<Message[]>([]);
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const [showGuardianOverlay, setShowGuardianOverlay] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const queryClient = useQueryClient();
@@ -141,6 +144,10 @@ export default function Chat() {
       return res.json();
     },
   });
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('openmacaw:streaming', { detail: isStreaming }));
+  }, [isStreaming]);
 
   const { data: currentSession, isLoading: sessionLoading } = useQuery<Session>({
     queryKey: ['session', currentSessionId],
@@ -367,7 +374,47 @@ export default function Chat() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 bg-black">
+      <div className="flex-1 flex flex-col min-w-0 bg-black relative">
+        {currentSessionId && (
+          <div className="h-14 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-zinc-950 z-10 backdrop-blur-sm relative">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-gray-200">{currentSession?.title || 'Chat'}</span>
+            </div>
+            <div 
+              onClick={() => setShowGuardianOverlay(!showGuardianOverlay)}
+              className="flex items-center gap-2 cursor-pointer hover:bg-white/5 px-2 py-1 rounded transition-colors group relative"
+            >
+              <ShieldCheck className="w-4 h-4 text-cyan-500 group-hover:shadow-[0_0_12px_rgba(6,182,212,0.6)] rounded-full transition-shadow" />
+              <span className="text-xs text-cyan-500 font-mono tracking-wide uppercase hidden md:inline">Guardian Active</span>
+            </div>
+
+            {showGuardianOverlay && (
+              <div className="absolute top-12 right-4 w-72 bg-zinc-900/90 backdrop-blur-md border border-white/10 rounded-lg shadow-2xl p-4 z-50">
+                <h4 className="text-xs font-bold text-gray-300 mb-2 uppercase tracking-wider flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-cyan-500" />
+                  System Security Status
+                </h4>
+                <div className="space-y-2 text-xs font-mono text-gray-400">
+                  <div className="flex justify-between border-b border-white/5 pb-1">
+                    <span>Interceptor</span>
+                    <span className="text-cyan-500">Enabled</span>
+                  </div>
+                  <div className="flex justify-between border-b border-white/5 pb-1">
+                    <span>Approval Layer</span>
+                    <span className="text-cyan-500">Enforced</span>
+                  </div>
+                  <div className="flex justify-between pb-1">
+                    <span>Active Shields</span>
+                    <span className="text-cyan-500">Enabled</span>
+                  </div>
+                </div>
+                <div className="mt-3 text-[10px] text-gray-500 leading-tight">
+                  All MCP tool requests require explicit human approval. Destructive actions will trigger critical warnings.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {!currentSessionId ? (
             <div className="flex items-center justify-center h-full text-gray-500 font-mono text-sm">

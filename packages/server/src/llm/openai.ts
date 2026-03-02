@@ -35,7 +35,8 @@ export class OpenAIProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void
+    onDelta: (delta: StreamDelta) => void,
+    signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
       if (msg.role === 'tool') {
@@ -91,7 +92,7 @@ export class OpenAIProvider implements LLMProvider {
       messages: openaiMessages,
       tools: openaiTools.length > 0 ? openaiTools as any[] : undefined,
       stream: true,
-    });
+    }, { signal });
 
     let inputTokens = 0;
     let outputTokens = 0;

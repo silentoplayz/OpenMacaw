@@ -31,10 +31,12 @@ export type AgentEvent =
   | { type: 'step_verified'; stepId: string; confidence: number; passed: boolean; anomalies: string[] }
   | { type: 'pipeline_halted'; reason: string; anomalies: string[] };
 
+export const activeStreams = new Set<AbortController>();
+
 export class AgentRuntime {
   private config: AgentConfig;
-  private messages: Message[] = [];
   private eventHandler: EventHandler;
+  private messages: Message[];
   private stepCount = 0;
   private maxSteps: number;
 
@@ -112,35 +114,52 @@ export class AgentRuntime {
       let interceptedProposal = false;
       let currentTurnHadToolCall = false;
 
-      await provider.chat(
-        this.config.model,
-        this.messages,
-        tools,
-        async (delta: StreamDelta) => {
-          if (delta.type === 'text_delta' && delta.content) {
-            deltaText += delta.content;
-            this.eventHandler({ type: 'text_delta', content: delta.content });
-          } else if (delta.type === 'tool_use' && delta.toolCall) {
-            currentTurnHadToolCall = true;
-            interceptedProposal = await this.handleToolCall(delta.toolCall);
-          } else if ((delta as any).type === 'clear_text') {
-            deltaText = '';
-          } else if (delta.type === 'message_end' && delta.usage) {
-            this.eventHandler({ type: 'message_end', usage: delta.usage });
-            // Only save text if there was NO tool call this turn.
-            // When there IS a tool call, handleToolCall already saves the proposal
-            // as the single assistant message for this turn. Saving a second
-            // assistant message would create an invalid consecutive-assistant
-            // sequence that the Anthropic API rejects.
-            if (deltaText && !currentTurnHadToolCall) {
-              await this.saveMessage('assistant', deltaText, delta.usage);
-              this.messages.push({ role: 'assistant', content: deltaText });
+      const abortController = new AbortController();
+      activeStreams.add(abortController);
+
+      try {
+        await provider.chat(
+          this.config.model,
+          this.messages,
+          tools,
+          async (delta: StreamDelta) => {
+            if (delta.type === 'text_delta' && delta.content) {
+              deltaText += delta.content;
+              this.eventHandler({ type: 'text_delta', content: delta.content });
+            } else if (delta.type === 'tool_use' && delta.toolCall) {
+              currentTurnHadToolCall = true;
+              interceptedProposal = await this.handleToolCall(delta.toolCall);
+            } else if ((delta as any).type === 'clear_text') {
+              deltaText = '';
+            } else if (delta.type === 'message_end' && delta.usage) {
+              this.eventHandler({ type: 'message_end', usage: delta.usage });
+              // Only save text if there was NO tool call this turn.
+              // When there IS a tool call, handleToolCall already saves the proposal
+              // as the single assistant message for this turn. Saving a second
+              // assistant message would create an invalid consecutive-assistant
+              // sequence that the Anthropic API rejects.
+              if (deltaText && !currentTurnHadToolCall) {
+                await this.saveMessage('assistant', deltaText, delta.usage);
+                this.messages.push({ role: 'assistant', content: deltaText });
+              }
+            } else if (delta.type === 'error') {
+              this.eventHandler({ type: 'error', message: delta.error || 'Unknown error' });
             }
-          } else if (delta.type === 'error') {
-            this.eventHandler({ type: 'error', message: delta.error || 'Unknown error' });
-          }
+          },
+          abortController.signal
+        );
+      } catch (e: any) {
+        if (e.name === 'AbortError') {
+          console.log('[Agent] Stream aborted by user (Halt All)');
+          this.eventHandler({ type: 'error', message: 'Stream aborted (System Halt)' });
+          break; // Break the runtime loop entirely
         }
-      );
+        throw e;
+      } finally {
+        activeStreams.delete(abortController);
+      }
+
+      this.stepCount++;
 
       // Stop loop if we intercepted a tool proposal (Human-in-the-Loop breakpoint)
       if (interceptedProposal) {

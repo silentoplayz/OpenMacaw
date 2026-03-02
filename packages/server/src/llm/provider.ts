@@ -34,7 +34,8 @@ export interface LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void
+    onDelta: (delta: StreamDelta) => void,
+    signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }>;
 }
 

@@ -34,7 +34,8 @@ export class AnthropicProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void
+    onDelta: (delta: StreamDelta) => void,
+    signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const systemMessage = messages.find(m => m.role === 'system');
     const nonSystemMessages = messages.filter(m => m.role !== 'system');
@@ -100,7 +101,7 @@ export class AnthropicProvider implements LLMProvider {
       system: systemMessage?.content,
       messages: anthropicMessages,
       tools: toolUse.length > 0 ? toolUse : undefined,
-    });
+    }, { signal });
 
     let currentToolCall: { id: string; name: string; input: Record<string, unknown> } | null = null;
     let currentToolInputBuffer = '';
