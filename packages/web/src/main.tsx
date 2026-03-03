@@ -9,6 +9,7 @@ import Permissions from './pages/Permissions';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
 import Pipelines from './pages/Pipelines';
+import Catalog from './pages/Catalog';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -34,6 +35,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="pipelines" element={<Pipelines />} />
           <Route path="activity" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="catalog" element={<Catalog />} />
         </Route>
       </Routes>
     </BrowserRouter>

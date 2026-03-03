@@ -1,6 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import type { PipelineRecord, TelegramConfig } from './types.js';
 import { runAgentForPipelineAsync, splitMessage } from './runner.js';
+import { createSession } from '../agent/session.js';
+import { updatePipeline } from './manager.js';
 
 export class TelegramPipeline {
   private record: PipelineRecord;
@@ -16,6 +18,7 @@ export class TelegramPipeline {
     if (!this.record.sessionId) throw new Error('Telegram pipeline requires an assigned session');
 
     const sessionId = this.record.sessionId;
+    const pipelineId = this.record.id;
     const allowedChatIds = cfg.allowedChatIds ?? [];
 
     this.bot = new TelegramBot(cfg.botToken, { polling: true });
@@ -26,8 +29,16 @@ export class TelegramPipeline {
       const chatId = String(msg.chat.id);
       if (allowedChatIds.length > 0 && !allowedChatIds.includes(chatId)) return;
 
+      const sessionRecoveryFn = async (): Promise<string | null> => {
+        try {
+          const newSession = createSession({ title: `${this.record.name} Conversation` });
+          updatePipeline(pipelineId, { sessionId: newSession.id });
+          return newSession.id;
+        } catch { return null; }
+      };
+
       try {
-        const response = await runAgentForPipelineAsync(sessionId, msg.text);
+        const response = await runAgentForPipelineAsync(sessionId, msg.text, undefined, sessionRecoveryFn);
         if (response) {
           // Telegram hard limit is 4096 characters per message
           for (const chunk of splitMessage(response, 4000)) {

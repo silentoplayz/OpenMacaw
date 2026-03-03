@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
-import { getConfig } from '../config.js';
+import { getActiveSettings } from '../config.js';
 
 const chatSchema = z.discriminatedUnion('type', [
   z.object({
@@ -59,7 +59,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             return;
           }
 
-          const config = getConfig();
+          const config = getActiveSettings();
           console.log('[WebSocket] Creating agent with model:', model || session.model || config.DEFAULT_MODEL);
 
           await createAgentRuntime(
@@ -116,7 +116,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Session not found' });
     }
 
-    const config = getConfig();
+    const config = getActiveSettings();
     const events: AgentEvent[] = [];
 
     const eventHandler = (event: AgentEvent) => {

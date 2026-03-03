@@ -40,7 +40,12 @@ export class AnthropicProvider implements LLMProvider {
     const systemMessage = messages.find(m => m.role === 'system');
     const nonSystemMessages = messages.filter(m => m.role !== 'system');
 
-    const anthropicMessages = nonSystemMessages.map((msg): Anthropic.MessageParam => {
+    // Convert each internal Message to an Anthropic MessageParam, then merge
+    // consecutive messages of the same role into one.  The Anthropic API
+    // requires strict user/assistant alternation; consecutive user messages
+    // (e.g. multiple back-to-back tool_results) must be combined into a single
+    // user message with multiple content blocks.
+    const rawMapped = nonSystemMessages.map((msg): Anthropic.MessageParam => {
       if (msg.role === 'tool') {
         return {
           role: 'user',
@@ -82,6 +87,25 @@ export class AnthropicProvider implements LLMProvider {
         content: msg.content,
       };
     });
+
+    // Merge consecutive messages that share the same role into one message.
+    // This is required because the Anthropic API mandates strict alternation.
+    const anthropicMessages: Anthropic.MessageParam[] = [];
+    for (const msg of rawMapped) {
+      const prev = anthropicMessages[anthropicMessages.length - 1];
+      if (prev && prev.role === msg.role) {
+        // Merge content into the existing message
+        const prevContent = Array.isArray(prev.content)
+          ? prev.content
+          : [{ type: 'text' as const, text: prev.content as string }];
+        const newContent = Array.isArray(msg.content)
+          ? msg.content
+          : [{ type: 'text' as const, text: msg.content as string }];
+        prev.content = [...prevContent, ...newContent];
+      } else {
+        anthropicMessages.push({ ...msg });
+      }
+    }
 
     const toolUse: Anthropic.Tool[] = tools.map(tool => ({
       name: tool.name,

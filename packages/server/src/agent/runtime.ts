@@ -5,7 +5,7 @@ import { evaluatePermission, extractServerIdFromToolName } from '../permissions/
 import { getConfig } from '../config.js';
 import { getDrizzleDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { getSession, updateSession } from './session.js';
 
@@ -65,6 +65,12 @@ export class AgentRuntime {
   private stepCount = 0;
   private maxSteps: number;
 
+  // ── Task 4: Safety Brake state ────────────────────────────────────────────
+  /** Timestamps (ms) of every tool call fired in the current run() turn. */
+  private toolCallTimestamps: number[] = [];
+  private readonly RATE_LIMIT_WINDOW_MS = 10_000;
+  private readonly RATE_LIMIT_MAX_CALLS = 3;
+
   constructor(config: AgentConfig, eventHandler: EventHandler) {
     this.config = config;
     this.eventHandler = eventHandler;
@@ -75,7 +81,8 @@ export class AgentRuntime {
   private async loadHistory(): Promise<void> {
     const db = getDrizzleDb();
     const history = await db.select().from(schema.messages)
-      .where(eq(schema.messages.sessionId, this.config.sessionId));
+      .where(eq(schema.messages.sessionId, this.config.sessionId))
+      .orderBy(asc(schema.messages.createdAt));
 
     if (history.length === 0) {
       if (this.config.systemPrompt) {
@@ -119,6 +126,9 @@ export class AgentRuntime {
   }
 
   async run(userMessage?: string): Promise<void> {
+    // Reset Safety Brake counters for this fresh run turn
+    this.toolCallTimestamps = [];
+
     // Load conversation history so Claude has context from previous turns
     await this.loadHistory();
 
@@ -136,9 +146,9 @@ export class AgentRuntime {
     while (this.stepCount < this.maxSteps) {
       const tools = getAllTools();
       console.log('[Agent] Available tools:', tools.length);
-      
+
       const provider = getProviderForModel(this.config.model);
-      
+
       let deltaText = '';
       let interceptedProposal = false;
       let currentTurnHadToolCall = false;
@@ -247,6 +257,25 @@ export class AgentRuntime {
 
   // Returns true if execution should halt because a proposal was emitted.
   private async handleToolCall(toolCall: ToolCall, precedingText = ''): Promise<boolean> {
+    // ── Task 4: Safety Brake ─────────────────────────────────────────────────
+    // Track tool-call timestamps and abort if too many fire in a short window.
+    const now = Date.now();
+    this.toolCallTimestamps = this.toolCallTimestamps.filter(
+      (t) => now - t < this.RATE_LIMIT_WINDOW_MS
+    );
+    this.toolCallTimestamps.push(now);
+
+    if (this.toolCallTimestamps.length > this.RATE_LIMIT_MAX_CALLS) {
+      console.error(
+        `[Agent] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
+      );
+      this.eventHandler({
+        type: 'error',
+        message: 'Loop detected. Guardian engaged.',
+      });
+      return true; // halt the run() loop immediately
+    }
+
     let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
     console.log('[Agent] Tool call (raw):', toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
 
@@ -300,9 +329,29 @@ export class AgentRuntime {
 
       await this.logActivity(serverId, toolName, toolCall.input, 'denied', permResult.reason);
 
+      // Persist the assistant tool_use + denial tool_result as a matched pair so
+      // that when history is replayed the Anthropic API sees a valid sequence.
+      // Without both rows the orphan-filter would drop the tool_result, leaving
+      // a bare tool_use block that causes a 400 on the next LLM call.
+      const toolCallPayload = JSON.stringify([{
+        id: toolCall.id,
+        name: toolCall.name,
+        arguments: toolCall.input,
+      }]);
+      await this.saveMessage('assistant', '', undefined, toolCallPayload, toolCall.id, 'denied');
+
+      const denyContent = `Tool call denied: ${permResult.reason}`;
+      await this.saveMessage('tool', denyContent, undefined, undefined, toolCall.id);
+
+      this.messages.push({
+        role: 'assistant',
+        content: '',
+        toolCallId: toolCall.id,
+        toolCalls: toolCallPayload,
+      });
       this.messages.push({
         role: 'tool',
-        content: `Tool call denied: ${permResult.reason}`,
+        content: denyContent,
         toolCallId: toolCall.id,
         toolName,
       });
@@ -324,16 +373,18 @@ export class AgentRuntime {
     // ── Proposal mode (web UI — requires human approval) ─────────────────────
     this.messages.push({
       role: 'assistant',
-      content: null as any, // Must be null when tool_calls present
+      content: precedingText,
       toolCallId: toolCall.id,
       toolName,
     });
 
-    // Save with BARE tool name (not serverId__toolName) so history stays clean
+    // Save with BARE tool name (not serverId__toolName) so history stays clean.
+    // Use the model's actual preceding prose as the content — this preserves the
+    // assistant's reasoning text in the DB so history replays correctly.
     const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: toolName, arguments: toolCall.input }]);
     await this.saveMessage(
       'assistant',
-      `Proposed: ${toolName}`,
+      precedingText,
       undefined,
       toolCallPayload,
       toolCall.id,
@@ -463,20 +514,27 @@ export class AgentRuntime {
     const db = getDrizzleDb();
     const messageId = nanoid();
 
-    await db.insert(schema.messages).values({
-      id: messageId,
-      sessionId: this.config.sessionId,
-      role,
-      content,
-      toolCalls,
-      toolCallId,
-      status,
-      model: role === 'assistant' ? this.config.model : undefined,
-      inputTokens: usage?.inputTokens,
-      outputTokens: usage?.outputTokens,
-      createdAt: new Date(),
-    });
-    console.log('[Agent] Message saved:', messageId);
+    try {
+      await db.insert(schema.messages).values({
+        id: messageId,
+        sessionId: this.config.sessionId,
+        role,
+        content,
+        toolCalls,
+        toolCallId,
+        status,
+        model: role === 'assistant' ? this.config.model : undefined,
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        createdAt: new Date(),
+      });
+      console.log('[Agent] Message saved:', messageId);
+    } catch (e) {
+      // A FK constraint here almost always means the session was deleted while
+      // the agent was mid-flight (e.g. during a Discord approval reaction wait).
+      // Log it clearly instead of crashing the entire pipeline run.
+      console.error('[Agent] Failed to save message (session may have been deleted):', e instanceof Error ? e.message : e);
+    }
   }
 
   private async logActivity(
@@ -487,19 +545,26 @@ export class AgentRuntime {
     reason?: string,
     latency?: number
   ): Promise<void> {
-    const db = getDrizzleDb();
-    
-    await db.insert(schema.activityLog).values({
-      id: nanoid(),
-      sessionId: this.config.sessionId,
-      serverId,
-      toolName,
-      toolInput: JSON.stringify(toolInput),
-      outcome,
-      reason,
-      latency,
-      timestamp: new Date(),
-    });
+    try {
+      const db = getDrizzleDb();
+      await db.insert(schema.activityLog).values({
+        id: nanoid(),
+        sessionId: this.config.sessionId,
+        serverId,
+        toolName,
+        toolInput: JSON.stringify(toolInput),
+        outcome,
+        reason,
+        latency,
+        timestamp: new Date(),
+      });
+    } catch (e) {
+      // Non-fatal: activity log failures must never crash the agent run.
+      // Common cause: session or server row was deleted while the agent was
+      // mid-flight (e.g. user deleted the conversation during a Discord
+      // approval wait). Log the warning and continue.
+      console.warn('[Agent] Failed to write activity log (non-fatal):', e instanceof Error ? e.message : e);
+    }
   }
 
   private async generateTitleIfNeeded(userMessage: string): Promise<void> {

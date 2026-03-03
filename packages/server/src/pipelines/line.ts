@@ -1,6 +1,8 @@
 import { createHmac } from 'crypto';
 import type { PipelineRecord, LineConfig } from './types.js';
 import { runAgentForPipelineAsync, splitMessage } from './runner.js';
+import { createSession } from '../agent/session.js';
+import { updatePipeline } from './manager.js';
 
 // ── LINE Webhook event types (subset used here) ───────────────────────────────
 
@@ -86,7 +88,14 @@ export class LinePipeline {
       const textMsg = event.message as LineTextMessage;
 
       try {
-        const response = await runAgentForPipelineAsync(this.record.sessionId, textMsg.text);
+        const sessionRecoveryFn = async (): Promise<string | null> => {
+          try {
+            const newSession = createSession({ title: `${this.record.name} Conversation` });
+            updatePipeline(this.record.id, { sessionId: newSession.id });
+            return newSession.id;
+          } catch { return null; }
+        };
+        const response = await runAgentForPipelineAsync(this.record.sessionId, textMsg.text, undefined, sessionRecoveryFn);
 
         if (response) {
           // LINE allows up to 5 reply messages per replyToken, each max 5000 chars

@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
-  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -222,13 +222,11 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
                     </div>
                     <button
                       onClick={() => toggleServer.mutate({ id: server.id, enabled: !server.enabled })}
-                      className={`ml-3 relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        server.enabled ? 'bg-cyan-600' : 'bg-gray-800'
-                      }`}
+                      className={`ml-3 relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${server.enabled ? 'bg-cyan-600' : 'bg-gray-800'
+                        }`}
                     >
-                      <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white transition duration-200 ease-in-out mt-[1px] ml-[1px] ${
-                        server.enabled ? 'translate-x-3' : 'translate-x-0'
-                      }`} />
+                      <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white transition duration-200 ease-in-out mt-[1px] ml-[1px] ${server.enabled ? 'translate-x-3' : 'translate-x-0'
+                        }`} />
                     </button>
                   </div>
                 ))}
@@ -294,11 +292,11 @@ function App() {
       const customEvent = e as CustomEvent;
       const { action, calls, error } = customEvent.detail;
       const time = new Date().toISOString().split('T')[1].split('.')[0];
-      
+
       const newLogs = calls.map((c: any, i: number) => {
         let message = '';
         let type: 'info' | 'success' | 'error' = 'info';
-        
+
         if (action === 'START') {
           message = `Executing ${c.name}...`;
         } else if (action === 'SUCCESS') {
@@ -366,6 +364,7 @@ function App() {
   const navItems = [
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/servers', label: 'Servers', icon: Server },
+    { path: '/catalog', label: 'Catalog', icon: BookMarked },
     { path: '/activity', label: 'Audit Log', icon: Activity },
     { path: '/pipelines', label: 'Pipelines', icon: Workflow },
     { path: '/settings', label: 'Settings', icon: Settings },
@@ -405,9 +404,8 @@ function App() {
                   key={item.path}
                   to={item.path}
                   title={item.label}
-                  className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${
-                    isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                  }`}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                    }`}
                 >
                   <Icon className="w-4 h-4 shrink-0" />
                   <span className="font-medium">{item.label}</span>
@@ -424,8 +422,8 @@ function App() {
             </div>
             <div className="space-y-0.5">
               {servers?.filter(s => s.status === 'running' || s.status === 'paused').map((server) => (
-                <div 
-                  key={server.id} 
+                <div
+                  key={server.id}
                   onClick={() => {
                     console.log('Opening drawer for:', server.id);
                     setSelectedServerId(server.id);
@@ -441,16 +439,16 @@ function App() {
               )}
             </div>
           </div>
-          
+
           <div className="px-2 pb-2">
-            <button 
+            <button
               onClick={() => haltMutation.mutate()}
               disabled={haltMutation.isPending || !isGlobalStreaming}
               className={`w-full flex items-center justify-center gap-2 px-3 py-2 border rounded text-xs font-bold uppercase tracking-wider transition-all
-               ${isGlobalStreaming 
-                 ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]' 
-                 : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
-               }
+               ${isGlobalStreaming
+                  ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]'
+                  : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
+                }
              `}
             >
               <AlertOctagon className="w-4 h-4" />
@@ -539,11 +537,10 @@ function App() {
                 {executionLogs.map(log => (
                   <div key={log.id} className="flex gap-2 leading-relaxed">
                     <span className="text-gray-600 shrink-0">[{log.time}]</span>
-                    <span className={`${
-                      log.type === 'success' ? 'text-green-500' :
-                      log.type === 'error' ? 'text-red-500' :
-                      'text-cyan-400 animate-pulse'
-                    }`}>{log.message}</span>
+                    <span className={`${log.type === 'success' ? 'text-green-500' :
+                        log.type === 'error' ? 'text-red-500' :
+                          'text-cyan-400 animate-pulse'
+                      }`}>{log.message}</span>
                   </div>
                 ))}
                 {inspectorEntries.map(entry => (
@@ -603,17 +600,17 @@ function App() {
         </aside>
 
       </div>
-      
+
       {/* Global Overlay: Server Permission Drawer */}
       <AnimatePresence>
         {selectedServerId && (
           <>
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }} 
-              className="fixed inset-0 bg-black/50 z-40 backdrop-blur-sm" 
-              onClick={() => setSelectedServerId(null)} 
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
+              onClick={() => setSelectedServerId(null)}
             />
             <ServerPermissionDrawer serverId={selectedServerId} onClose={() => setSelectedServerId(null)} />
           </>

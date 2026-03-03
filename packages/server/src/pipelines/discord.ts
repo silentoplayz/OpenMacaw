@@ -1,4 +1,5 @@
 import {
+  ActivityType,
   Client,
   EmbedBuilder,
   GatewayIntentBits,
@@ -7,9 +8,20 @@ import {
 } from 'discord.js';
 import type { PipelineRecord, DiscordConfig } from './types.js';
 import { runAgentForPipelineAsync, splitMessage, type ApprovalFn } from './runner.js';
+import { createSession } from '../agent/session.js';
+import { updatePipeline } from './manager.js';
 
 /** How long (ms) to wait for a reaction before denying automatically. */
 const APPROVAL_TIMEOUT_MS = 60_000;
+
+/**
+ * Returns true when a string looks like a raw JSON dump (object or array).
+ * Used to suppress accidental JSON walls in Discord chat.
+ */
+function looksLikeJson(text: string): boolean {
+  const t = text.trim();
+  return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'));
+}
 
 /** Emoji used for approve / deny reactions. */
 const APPROVE_EMOJI = '✅';
@@ -45,6 +57,8 @@ export class DiscordPipeline {
       partials: [Partials.Channel, Partials.Message, Partials.Reaction],
     });
 
+    const pipelineId = this.record.id;
+
     this.client.on('messageCreate', (message: Message) => {
       if (message.author.bot) return;
       if (channelId && message.channelId !== channelId) return;
@@ -62,7 +76,7 @@ export class DiscordPipeline {
         return;
       }
 
-      this.handleMessageAsync(message, content, sessionId, pipelineName).catch((err) => {
+      this.handleMessageAsync(message, content, sessionId, pipelineName, pipelineId).catch((err) => {
         console.error(`[Discord Pipeline: ${pipelineName}] Unhandled error in message handler:`, err);
       });
     });
@@ -150,15 +164,36 @@ export class DiscordPipeline {
     message: Message,
     content: string,
     sessionId: string,
-    pipelineName: string
+    pipelineName: string,
+    pipelineId: string,
   ): Promise<void> {
     console.log(`[Discord Pipeline: ${pipelineName}] Message from ${message.author.tag}: ${content.substring(0, 80)}`);
 
+    // ── Task 3: Thinking status ───────────────────────────────────────────────
+    this.client?.user?.setPresence({
+      activities: [{ name: 'Thinking…', type: ActivityType.Watching }],
+      status: 'online',
+    });
+
     const approvalFn = this.makeApprovalFn(message, pipelineName);
+
+    // Session recovery: if the conversation was deleted from the web UI while
+    // the bot was waiting for a reaction, recreate it so the chat can continue.
+    const sessionRecoveryFn = async (): Promise<string | null> => {
+      try {
+        const newSession = createSession({ title: `${pipelineName} Conversation` });
+        updatePipeline(pipelineId, { sessionId: newSession.id });
+        console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id}`);
+        return newSession.id;
+      } catch (err) {
+        console.error(`[Discord Pipeline: ${pipelineName}] Session recovery failed:`, err);
+        return null;
+      }
+    };
 
     let response: string;
     try {
-      response = await runAgentForPipelineAsync(sessionId, content, approvalFn);
+      response = await runAgentForPipelineAsync(sessionId, content, approvalFn, sessionRecoveryFn);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[Discord Pipeline: ${pipelineName}] Agent error:`, errMsg);
@@ -166,12 +201,30 @@ export class DiscordPipeline {
         console.error(`[Discord Pipeline: ${pipelineName}] Failed to send error reply:`, replyErr)
       );
       return;
+    } finally {
+      // ── Task 3: Restore idle presence when done (success or error) ───────────
+      this.client?.user?.setPresence({ activities: [], status: 'idle' });
     }
 
     if (!response) {
       console.warn(`[Discord Pipeline: ${pipelineName}] Agent returned empty response for: "${content.substring(0, 80)}"`);
       await message.reply('I processed your message but have no response to send.')
         .catch((err) => console.error(`[Discord Pipeline: ${pipelineName}] Failed to send empty-response notice:`, err));
+      return;
+    }
+
+    // ── Task 2: Iron Curtain — suppress raw JSON walls ────────────────────────
+    // If the entire agent response is a raw JSON object/array, do NOT post it
+    // as plain text. Show a tidy suppression embed instead.
+    if (looksLikeJson(response)) {
+      console.warn(`[Discord Pipeline: ${pipelineName}] Iron Curtain: suppressing raw JSON response (${response.length} chars)`);
+      const suppressEmbed = new EmbedBuilder()
+        .setColor(0x6b7280) // slate-grey
+        .setTitle('ℹ️ Structured response suppressed')
+        .setDescription('The agent returned a structured data payload that is not suitable for display in chat.');
+      await message.reply({ embeds: [suppressEmbed] }).catch((err) =>
+        console.error(`[Discord Pipeline: ${pipelineName}] Failed to send suppression embed:`, err)
+      );
       return;
     }
 

@@ -68,8 +68,8 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
 
           await db.insert(schema.activityLog).values({
             id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
-            serverId: 'unknown',
+            sessionId: payload.sessionId ?? null,
+            serverId: null,
             toolName: call.name,
             toolInput: JSON.stringify(call.arguments),
             outcome: 'denied',
@@ -90,7 +90,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
 
           await db.insert(schema.activityLog).values({
             id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
+            sessionId: payload.sessionId ?? null,
             serverId,
             toolName,
             toolInput: JSON.stringify(call.arguments),
@@ -137,7 +137,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
 
           await db.insert(schema.activityLog).values({
             id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
+            sessionId: payload.sessionId ?? null,
             serverId,
             toolName,
             toolInput: JSON.stringify(call.arguments),
@@ -147,14 +147,16 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
           });
 
           const resultStr = JSON.stringify(result);
-          await db.insert(schema.messages).values({
-            id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
-            role: 'tool',
-            content: `The user approved the action, and here is the result: ${resultStr}\n\nNow, finish your response to the user.`,
-            toolCallId: call.id,
-            createdAt: new Date(),
-          });
+          if (payload.sessionId) {
+            await db.insert(schema.messages).values({
+              id: nanoid(),
+              sessionId: payload.sessionId,
+              role: 'tool',
+              content: `The user approved the action, and here is the result: ${resultStr}\n\nNow, finish your response to the user.`,
+              toolCallId: call.id,
+              createdAt: new Date(),
+            });
+          }
 
           // ── State machine: mark proposal as 'executed' ────────────────────────────
           if (call.id) {
@@ -162,7 +164,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
               .set({ status: 'executed' })
               .where(eq(schema.messages.toolCallId, call.id));
           }
-          console.log('[Execute API] Tool result saved to DB, sessionId:', payload.sessionId || 'anonymous');
+          console.log('[Execute API] Tool result saved to DB, sessionId:', payload.sessionId ?? '(none)');
 
           results.push({ name: call.name, status: 'success', result });
         } catch (error) {
@@ -170,7 +172,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
 
           await db.insert(schema.activityLog).values({
             id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
+            sessionId: payload.sessionId ?? null,
             serverId,
             toolName,
             toolInput: JSON.stringify(call.arguments),
@@ -179,14 +181,16 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
             timestamp: new Date(),
           });
 
-          await db.insert(schema.messages).values({
-            id: nanoid(),
-            sessionId: payload.sessionId || 'anonymous',
-            role: 'tool',
-            content: `The user approved the action, but it failed with error: ${errorMsg}\n\nNow, inform the user about the failure.`,
-            toolCallId: call.id,
-            createdAt: new Date(),
-          });
+          if (payload.sessionId) {
+            await db.insert(schema.messages).values({
+              id: nanoid(),
+              sessionId: payload.sessionId,
+              role: 'tool',
+              content: `The user approved the action, but it failed with error: ${errorMsg}\n\nNow, inform the user about the failure.`,
+              toolCallId: call.id,
+              createdAt: new Date(),
+            });
+          }
 
           // Status stays 'approved' on failure — was approved, execution crashed.
           results.push({ name: call.name, status: 'failed', error: errorMsg });
@@ -194,7 +198,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       // Fire and forget agent completion in the background
-      if (payload.sessionId && payload.sessionId !== 'anonymous') {
+      if (payload.sessionId) {
         const session = getSession(payload.sessionId);
         if (session) {
           const config = getConfig();
@@ -251,6 +255,11 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
         : [];
       const targetMsg = (nameMatches.length > 0 ? nameMatches : pendingProps).at(-1);
 
+      // The real tool_use_id from the proposal — needed so the tool_result can
+      // be correctly paired with its tool_use block when history is replayed.
+      // Fall back to a synthetic ID only if we truly can't find the proposal.
+      const realToolCallId = targetMsg?.toolCallId ?? null;
+
       if (targetMsg?.id) {
         await db.update(schema.messages).set({ status: 'denied' }).where(
           eq(schema.messages.id, targetMsg.id)
@@ -260,14 +269,19 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
         console.warn('[Deny API] No pending proposal found to mark as denied for session:', sessionId);
       }
 
-      await db.insert(schema.messages).values({
-        id: nanoid(),
-        sessionId,
-        role: 'tool',
-        content: denialContent,
-        toolCallId: `denied-${Date.now()}`,
-        createdAt: new Date(),
-      });
+      // Only insert a tool_result row when we have a real tool_call_id to pair
+      // it with.  A synthetic/orphaned ID would break the Anthropic message
+      // sequence on the next LLM turn.
+      if (realToolCallId) {
+        await db.insert(schema.messages).values({
+          id: nanoid(),
+          sessionId,
+          role: 'tool',
+          content: denialContent,
+          toolCallId: realToolCallId,
+          createdAt: new Date(),
+        });
+      }
 
       // Fire background LLM run so it responds to the denial
       const session = getSession(sessionId);
