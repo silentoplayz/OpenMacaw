@@ -3,7 +3,8 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
-  ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun, ShieldCheck, Settings2, AlertOctagon
+  ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -262,6 +263,14 @@ function App() {
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [isGlobalStreaming, setIsGlobalStreaming] = useState(false);
 
+  // Inspector state
+  const [sessionInfo, setSessionInfo] = useState<{ model: string; sessionId: string } | null>(null);
+  const [telemetry, setTelemetry] = useState<{ inputTokens: number; outputTokens: number; responseTimeMs: number } | null>(null);
+  const [inspectorEntries, setInspectorEntries] = useState<
+    { id: string; time: string; message: string; type: 'info' | 'success' | 'error'; jsonPayload?: any }[]
+  >([]);
+  const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
+
   const haltMutation = useMutation({
     mutationFn: async () => {
       await apiFetch('/api/mcp/halt', { method: 'POST' });
@@ -318,9 +327,39 @@ function App() {
 
     window.addEventListener('openmacaw:executing', handleExecution);
     window.addEventListener('openmacaw:streaming', handleStreamingStatus);
+
+    const handleSessionInfo = (e: Event) => {
+      const { model, sessionId } = (e as CustomEvent).detail;
+      setSessionInfo({ model, sessionId });
+    };
+    const handleTelemetry = (e: Event) => {
+      setTelemetry((e as CustomEvent).detail);
+    };
+    const handleInspector = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const time = new Date().toISOString().split('T')[1].split('.')[0];
+      setInspectorEntries(prev => [
+        ...prev,
+        {
+          id: `insp-${Date.now()}`,
+          time,
+          message: `Proposal: ${detail.tool}`,
+          type: 'info' as const,
+          jsonPayload: detail.input,
+        }
+      ].slice(-30));
+    };
+
+    window.addEventListener('openmacaw:session_info', handleSessionInfo);
+    window.addEventListener('openmacaw:telemetry', handleTelemetry);
+    window.addEventListener('openmacaw:inspector', handleInspector);
+
     return () => {
       window.removeEventListener('openmacaw:executing', handleExecution);
       window.removeEventListener('openmacaw:streaming', handleStreamingStatus);
+      window.removeEventListener('openmacaw:session_info', handleSessionInfo);
+      window.removeEventListener('openmacaw:telemetry', handleTelemetry);
+      window.removeEventListener('openmacaw:inspector', handleInspector);
     };
   }, []);
 
@@ -443,17 +482,47 @@ function App() {
           <Outlet />
         </main>
 
-        {/* ── Right Pane (Medium: Audit/Inspector) ── */}
+        {/* ── Right Pane: Glass Box Inspector ── */}
         <aside className="w-80 hidden lg:flex flex-col bg-zinc-950 border-l border-white/5 shrink-0 z-10">
+          {/* Inspector Header */}
           <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-black">
             <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">Inspector</span>
             <Activity className="w-3.5 h-3.5 text-gray-500" />
           </div>
-          <div 
+
+          {/* Top Section: Active Session State */}
+          <div className="px-4 py-3 border-b border-white/5 space-y-1.5 bg-black/50">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono uppercase tracking-widest text-gray-600">Session State</span>
+              <Cpu className="w-3 h-3 text-gray-600" />
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-gray-500">Model</span>
+              <span className="text-cyan-400 truncate max-w-[140px]">{sessionInfo?.model || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-gray-500">Session</span>
+              <button
+                onClick={() => {
+                  if (sessionInfo?.sessionId) {
+                    navigator.clipboard.writeText(sessionInfo.sessionId);
+                  }
+                }}
+                className="flex items-center gap-1 text-gray-400 hover:text-cyan-400 transition-colors group"
+                title="Click to copy full ID"
+              >
+                <span className="truncate max-w-[100px] text-[11px]">{sessionInfo?.sessionId?.slice(0, 12) || '—'}…</span>
+                <Copy className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </button>
+            </div>
+          </div>
+
+          {/* Middle Section: Live Event Stream */}
+          <div
             ref={inspectorRef}
-            className="flex-1 p-3 font-mono text-[11px] text-gray-500 overflow-y-auto space-y-2 selection:bg-cyan-900/40"
+            className="flex-1 p-3 font-mono text-[11px] text-gray-500 overflow-y-auto space-y-1.5 selection:bg-cyan-900/40"
           >
-            {executionLogs.length === 0 ? (
+            {executionLogs.length === 0 && inspectorEntries.length === 0 ? (
               <>
                 <div className="flex gap-2">
                   <span className="text-gray-600">[{new Date().toISOString().split('T')[1].split('.')[0]}]</span>
@@ -465,17 +534,70 @@ function App() {
                 </div>
               </>
             ) : (
-              executionLogs.map(log => (
-                <div key={log.id} className="flex gap-2 leading-relaxed">
-                  <span className="text-gray-600 shrink-0">[{log.time}]</span>
-                  <span className={`${
-                    log.type === 'success' ? 'text-green-500' :
-                    log.type === 'error' ? 'text-red-500' :
-                    'text-cyan-400 animate-pulse'
-                  }`}>{log.message}</span>
-                </div>
-              ))
+              <>
+                {executionLogs.map(log => (
+                  <div key={log.id} className="flex gap-2 leading-relaxed">
+                    <span className="text-gray-600 shrink-0">[{log.time}]</span>
+                    <span className={`${
+                      log.type === 'success' ? 'text-green-500' :
+                      log.type === 'error' ? 'text-red-500' :
+                      'text-cyan-400 animate-pulse'
+                    }`}>{log.message}</span>
+                  </div>
+                ))}
+                {inspectorEntries.map(entry => (
+                  <div key={entry.id} className="border border-white/5 rounded bg-black/30">
+                    <button
+                      onClick={() => setExpandedEntries(prev => {
+                        const next = new Set(prev);
+                        next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                        return next;
+                      })}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
+                    >
+                      {expandedEntries.has(entry.id) ? (
+                        <ChevronUp className="w-3 h-3 text-gray-600 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3 text-gray-600 shrink-0" />
+                      )}
+                      <span className="text-gray-600 shrink-0">[{entry.time}]</span>
+                      <span className="text-amber-400 truncate">{entry.message}</span>
+                    </button>
+                    {expandedEntries.has(entry.id) && entry.jsonPayload && (
+                      <pre className="px-3 py-2 text-[10px] text-gray-400 border-t border-white/5 overflow-x-auto bg-black/50 max-h-40 overflow-y-auto">
+                        {JSON.stringify(entry.jsonPayload, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+              </>
             )}
+          </div>
+
+          {/* Bottom Section: Telemetry Footer */}
+          <div className="px-4 py-3 border-t border-white/5 bg-black/80 space-y-1.5 shrink-0">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono uppercase tracking-widest text-gray-600">Telemetry</span>
+              <Hash className="w-3 h-3 text-gray-600" />
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-gray-500 font-mono flex items-center gap-1"><Cpu className="w-3 h-3" /> Total Tokens</span>
+              <span className="font-mono text-cyan-400 font-bold">
+                {telemetry ? `${(telemetry.inputTokens + telemetry.outputTokens).toLocaleString()}` : '—'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-gray-500 font-mono text-[10px]">↳ In / Out</span>
+              <span className="font-mono text-cyan-400/70 text-[10px]">
+                {telemetry ? `${telemetry.inputTokens.toLocaleString()} / ${telemetry.outputTokens.toLocaleString()}` : '— / —'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-gray-500 font-mono flex items-center gap-1"><Clock className="w-3 h-3" /> Response Time</span>
+              <span className="font-mono text-cyan-400 font-bold">
+                {telemetry?.responseTimeMs ? `${(telemetry.responseTimeMs / 1000).toFixed(2)}s` : '—'}
+              </span>
+            </div>
           </div>
         </aside>
 

@@ -132,6 +132,26 @@ export function getAllTools(): ToolDefinition[] {
   return allTools;
 }
 
+/**
+ * Given a bare tool name (e.g. "list_directory"), find the ID of the first
+ * connected server that exposes that tool.  Also handles the already-encoded
+ * "SERVERID__toolname" format by stripping the prefix first.
+ */
+export function findServerIdForTool(toolName: string): string | undefined {
+  // Strip any existing SERVERID__ prefix so we always compare bare names
+  const dunderIdx = toolName.indexOf('__');
+  const bareName = dunderIdx !== -1 ? toolName.substring(dunderIdx + 2) : toolName;
+
+  for (const [serverId, server] of servers) {
+    if (!server.client.isConnected()) continue;
+    const tools = server.client.getTools();
+    if (tools.some(t => t.name === bareName)) {
+      return serverId;
+    }
+  }
+  return undefined;
+}
+
 export async function removeServer(id: string): Promise<void> {
   const server = servers.get(id);
   if (server) {

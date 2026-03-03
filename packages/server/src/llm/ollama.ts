@@ -3,9 +3,39 @@ import type { LLMProvider, Message, ToolDefinition, StreamDelta } from './provid
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 
+// ── Models that support format:"json" and structured tool calls ────────────────
+const JSON_FORMAT_MODELS = ['qwen', 'llama3', 'llama-3', 'mistral', 'gemma', 'deepseek', 'qwen2'];
+function supportsJsonFormat(model: string): boolean {
+  const lower = model.toLowerCase();
+  return JSON_FORMAT_MODELS.some(m => lower.includes(m));
+}
+
+// ── Hallucination Fingerprints ────────────────────────────────────────────────
+// Phrases that signal the model is ROLEPLAYING tool use instead of using the tool.
+const HALLUCINATION_PHRASES = [
+  'i have listed',
+  'i have read',
+  'i have executed',
+  'i have run',
+  'i have completed',
+  'here are the files',
+  'here is the content',
+  'here is the output',
+  'the directory contains',
+  'the file contains',
+  'i ran the command',
+  'i checked the',
+  'as requested, here',
+  'i searched for',
+  'i found the following',
+];
+
+export function looksLikeHallucinatedAction(text: string): boolean {
+  const lower = text.toLowerCase();
+  return HALLUCINATION_PHRASES.some(phrase => lower.includes(phrase));
+}
+
 function extractToolCall(responseText: string) {
-  const match = responseText.match(/```json\s*(\{.*?\})\s*```/s) || responseText.match(/```\s*(\{.*?\})\s*```/s);
-  
   const attemptParse = (str: string) => {
     try {
       const parsed = JSON.parse(str);
@@ -16,12 +46,22 @@ function extractToolCall(responseText: string) {
     return null;
   };
 
-  if (match && match[1]) {
-    const res = attemptParse(match[1]);
+  // 1. Try markdown-fenced JSON blocks first (most structured)
+  const mdMatch = responseText.match(/```json\s*(\{.*?\})\s*```/s) || responseText.match(/```\s*(\{.*?\})\s*```/s);
+  if (mdMatch && mdMatch[1]) {
+    const res = attemptParse(mdMatch[1]);
+    if (res) return res;
+  }
+
+  // 2. Aggressive inline scan: find ANY JSON object with "name" and "arguments" keys
+  const inlineRegex = /\{[\s\S]*?"name"\s*:\s*".*?"[\s\S]*?"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/g;
+  let match;
+  while ((match = inlineRegex.exec(responseText)) !== null) {
+    const res = attemptParse(match[0]);
     if (res) return res;
   }
   
-  // Fallback: parse entire string if it resembles JSON
+  // 3. Fallback: entire string if it looks like JSON
   const trimmed = responseText.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
      const res = attemptParse(trimmed);
@@ -69,10 +109,22 @@ export class OllamaProvider implements LLMProvider {
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
       if (msg.role === 'tool') {
+        // ── Task 2: Tool Role Shim ────────────────────────────────────────
+        // Ollama's OpenAI compat layer handles 'tool' role poorly — the LLM
+        // doesn't see the result and repeats the same call (Amnesia Loop).
+        // Convert to 'user' role, which every local model supports natively.
+        const toolId = msg.toolCallId || 'unknown';
+        // ── Task 3: Error Prefix ───────────────────────────────────────────
+        // If the tool result contains an error, prefix it explicitly so the
+        // LLM understands it failed and should try a different approach.
+        const rawContent = msg.content || '';
+        const looksLikeError = /error|exception|failed|not found|invalid|cannot|unable/i.test(rawContent);
+        const prefixedContent = looksLikeError
+          ? `SYSTEM ERROR: Tool call failed. ${rawContent}`
+          : rawContent;
         return {
-          role: 'tool',
-          content: msg.content,
-          tool_call_id: msg.toolCallId || 'unknown',
+          role: 'user',
+          content: `Tool Output [ID: ${toolId}]: ${prefixedContent}`,
         };
       }
       if (msg.role === 'system') {
@@ -85,18 +137,25 @@ export class OllamaProvider implements LLMProvider {
         try {
           const parsed = JSON.parse(msg.toolCalls);
           const toolCalls = Array.isArray(parsed) ? parsed : [parsed];
+          // ── Task 1: Correct Assistant Tool Call History ──────────────────
+          // content MUST be null when tool_calls are present.
+          // Sending the "I proposed..." text alongside tool_calls confuses
+          // Qwen / local models and causes the Amnesia Loop.
           return {
             role: 'assistant',
-            content: msg.content,
-            tool_calls: toolCalls.map(tc => ({
-              id: msg.toolCallId || 'call_unknown',
-              type: 'function',
+            content: null,
+            tool_calls: toolCalls.map((tc, idx) => ({
+              // ── Task 2: Stable, matching ID ──────────────────────────────
+              // Use the stored toolCallId. If multiple calls, suffix with idx.
+              id: (msg.toolCallId || `call_${Date.now()}`) + (idx > 0 ? `_${idx}` : ''),
+              type: 'function' as const,
               function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.arguments),
+                // Use bare tool name — never the SERVERID__toolName encoding
+                name: tc.name.includes('__') ? tc.name.split('__')[1] : tc.name,
+                arguments: JSON.stringify(tc.arguments ?? {}),
               },
             })),
-          };
+          } as any;
         } catch (e) {
           console.error('[Ollama] Failed to parse historical toolCalls:', e);
         }
@@ -116,17 +175,52 @@ export class OllamaProvider implements LLMProvider {
       },
     }));
 
-    const stream = await this.getClient().chat.completions.create({
+    // ── JSON Format Mode ─────────────────────────────────────────────────────
+    // Enable only when tools are requested AND the last message is NOT a tool
+    // result (Tool Output shim). After a tool result, the model should respond
+    // in natural language to summarize — not be forced into JSON output.
+    const lastUserMsg = openaiMessages.filter((m: any) => m.role === 'user').at(-1) as any;
+    const lastMsgIsToolOutput = typeof lastUserMsg?.content === 'string' &&
+      lastUserMsg.content.startsWith('Tool Output [ID:');
+    const useJsonFormat = tools.length > 0 && supportsJsonFormat(model) && !lastMsgIsToolOutput;
+    if (useJsonFormat) {
+      console.log(`[Ollama] Enabling format:"json" for model: ${model}`);
+    } else if (lastMsgIsToolOutput) {
+      console.log(`[Ollama] Disabling format:"json" — last message is a tool result (summary mode).`);
+    }
+
+    // ── Context Window Debug Log ──────────────────────────────────────────
+    console.log('[Ollama] Reconstructed History:',
+      JSON.stringify(
+        openaiMessages.map((m: any) => ({
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content.slice(0, 80) : m.content,
+          tool_call_id: m.tool_call_id,
+          has_tool_calls: !!(m.tool_calls?.length),
+          tool_call_ids: m.tool_calls?.map((tc: any) => tc.id),
+        })),
+        null, 2
+      )
+    );
+
+    const createParams: any = {
       model,
       messages: openaiMessages,
-      tools: openaiTools.length > 0 ? openaiTools as any[] : undefined,
+      tools: openaiTools.length > 0 ? openaiTools : undefined,
       stream: true,
-    }, { signal });
+      ...(useJsonFormat ? { response_format: { type: 'json_object' } } : {}),
+    };
+    const stream = await this.getClient().chat.completions.create(createParams, { signal }) as unknown as AsyncIterable<any>;
 
     let inputTokens = 0;
     let outputTokens = 0;
     let currentToolCall: { id: string; name: string; input: Record<string, unknown> } | null = null;
     let fullText = '';
+    // ── Task 1: Response Sanitizer Buffer ────────────────────────────────────
+    // We accumulate ALL text before sending to the runtime. If the buffer
+    // contains a JSON tool call pattern, we suppress surrounding text and
+    // only fire the tool_use event — never letting hallucinated prose through.
+    let suppressTextUntilEnd = false;
 
     for await (const chunk of stream) {
       const choice = chunk.choices[0];
@@ -134,10 +228,23 @@ export class OllamaProvider implements LLMProvider {
 
       if (choice.delta?.content) {
         fullText += choice.delta.content;
-        onDelta({
-          type: 'text_delta',
-          content: choice.delta.content,
-        });
+
+        // ── Muzzle Middleware: detect JSON tool pattern mid-stream ──────────
+        // If we spot the start of a tool call JSON in the accumulating buffer,
+        // set the suppress flag so no more text is forwarded to the runtime.
+        if (!suppressTextUntilEnd && fullText.includes('"name"') && fullText.includes('"arguments"')) {
+          console.log('[Ollama] Muzzle: Detected tool-call pattern in stream — suppressing prose text.');
+          suppressTextUntilEnd = true;
+          // Signal the runtime to clear any text already sent
+          onDelta({ type: 'clear_text' } as any);
+        }
+
+        if (!suppressTextUntilEnd) {
+          onDelta({
+            type: 'text_delta',
+            content: choice.delta.content,
+          });
+        }
       }
 
       if (choice.delta?.tool_calls) {
@@ -161,7 +268,7 @@ export class OllamaProvider implements LLMProvider {
       }
 
       if (choice.finish_reason) {
-        console.log('[Ollama] Raw Response Text:', fullText);
+        console.log('[Ollama] Raw Response Text:', fullText.substring(0, 200));
 
         if (currentToolCall) {
           onDelta({
@@ -170,19 +277,21 @@ export class OllamaProvider implements LLMProvider {
           });
           currentToolCall = null;
         } else if (fullText.trim()) {
-          // Safety Net: The Regex Parser Shim
+          // ── Safety Net: Regex Parser Shim ────────────────────────────────
+          // Final scan: if the full accumulated buffer contains a tool call
+          // JSON not captured by the OpenAI SDK, extract and fire it now.
           const extracted = extractToolCall(fullText);
           if (extracted) {
              console.log('[Ollama] Safety Net Intercept: Found tool call in raw text via Regex.');
              
-             // Match against valid tool names to fix missing prefixes (e.g. "list_directory" -> "server-filesystem:list_directory")
+             // Match against valid tool names to fix missing prefixes
              const validTool = tools.find(t => t.name === extracted.name || t.name.endsWith(':' + extracted.name));
              const correctName = validTool ? validTool.name : extracted.name;
 
-             // 1. Immediately clear the text buffer so nothing is sent to the UI as a standard message
+             // Clear text buffer so nothing is sent to the UI as a standard message
              onDelta({ type: 'clear_text' } as any);
 
-             // 2. Fire the tool_use event using the corrected name
+             // Fire the tool_use event using the corrected name
              onDelta({
                type: 'tool_use',
                toolCall: {

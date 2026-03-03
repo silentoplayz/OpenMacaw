@@ -1,9 +1,11 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
-import { getAllTools } from '../mcp/registry.js';
+import { looksLikeHallucinatedAction } from '../llm/ollama.js';
+import { getAllTools, findServerIdForTool } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 import { nanoid } from 'nanoid';
+import { getSession, updateSession } from './session.js';
 
 export type AgentMode = 'build' | 'plan';
 
@@ -25,6 +27,7 @@ export type AgentEvent =
   | { type: 'proposal'; id: string; tool: string; input: Record<string, unknown> }
   | { type: 'error'; message: string }
   | { type: 'step_count'; count: number }
+  | { type: 'session_renamed'; sessionId: string; newTitle: string }
   | { type: 'pipeline_stage'; stage: string }
   | { type: 'canary_leak_detected'; step: string }
   | { type: 'sanitizer_flagged'; strippedSegments: string[] }
@@ -102,6 +105,11 @@ export class AgentRuntime {
       console.log('[Agent] Received user message:', userMessage.substring(0, 50));
       this.messages.push({ role: 'user', content: userMessage });
       await this.saveMessage('user', userMessage);
+
+      // Fire-and-forget: auto-generate conversation title in the background
+      this.generateTitleIfNeeded(userMessage).catch(err =>
+        console.error('[Agent] Background title generation failed:', err)
+      );
     }
 
     while (this.stepCount < this.maxSteps) {
@@ -167,6 +175,33 @@ export class AgentRuntime {
         break;
       }
 
+      // ── Task 2: Hallucination Retry Loop ─────────────────────────────────
+      // If the model returned text that *looks* like it completed an action
+      // ("Here are the files...", "I have listed...") but fired ZERO actual
+      // tool calls, the response is hallucinated. REJECT it and force a retry.
+      if (deltaText && !currentTurnHadToolCall && looksLikeHallucinatedAction(deltaText)) {
+        console.warn('[Agent] HALLUCINATION DETECTED: Model simulated action without tool call. Rejecting response and retrying.');
+        console.warn('[Agent] Rejected text (first 200 chars):', deltaText.substring(0, 200));
+
+        // Do NOT save this message to the DB — discard it entirely
+        // Remove it from the in-memory message list if it was added
+        this.messages = this.messages.filter(m => m.content !== deltaText);
+
+        // Inject a corrective system message to steer the model back
+        const correctionMsg: Message = {
+          role: 'user',
+          content: 'SYSTEM ERROR: You simulated a tool action by describing the result in plain text, but you did NOT actually trigger the tool call. This is not allowed. You MUST output a valid JSON tool call in the exact format: {"name": "server:tool", "arguments": {...}}. Do not describe what you would do. Execute it now.'
+        };
+        this.messages.push(correctionMsg);
+        // Emit a system event so the frontend shows this (optional, for debugging)
+        this.eventHandler({ type: 'text_delta', content: '\n⚠️ Hallucination detected — forcing retry...' });
+
+        // Reset delta for next iteration
+        deltaText = '';
+        // Continue the loop (do NOT break — we want the model to try again)
+        continue;
+      }
+
       if (!deltaText && this.stepCount >= this.maxSteps) {
         this.eventHandler({ type: 'error', message: 'Max steps reached' });
         break;
@@ -182,17 +217,29 @@ export class AgentRuntime {
 
   // Returns true if execution should halt because a proposal was emitted.
   private async handleToolCall(toolCall: ToolCall): Promise<boolean> {
-    const { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
-    console.log('[Agent] Tool call:', toolName, 'from server:', serverId);
+    let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
+    console.log('[Agent] Tool call (raw):', toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
 
+    // ── Task 1: Tool-to-Server Lookup ─────────────────────────────────────
+    // If the LLM output a bare tool name (no server prefix), resolve it via
+    // the MCP registry before reaching the permission evaluator.
     if (!serverId) {
-      console.log('[Agent] DENIED: No server ID in tool name');
-      this.eventHandler({
-        type: 'tool_call_result',
-        outcome: 'denied',
-        reason: 'Tool name must include server ID (server:tool)',
-      });
-      return false;
+      const resolvedServerId = findServerIdForTool(toolCall.name);
+      if (resolvedServerId) {
+        console.log(`[Agent] Resolved bare tool name '${toolCall.name}' → serverId: '${resolvedServerId}'`);
+        serverId = resolvedServerId;
+        // toolName is already the bare name from extractServerIdFromToolName
+      } else {
+        // ── Task 3: Kill the Infinite Loop ──────────────────────────────
+        // Cannot resolve tool → HALT cleanly. Do NOT send error back to LLM
+        // (that would cause a hallucination retry spiral).
+        console.error(`[Agent] HALT: Tool '${toolCall.name}' could not be mapped to any active server.`);
+        this.eventHandler({
+          type: 'error',
+          message: `Tool '${toolCall.name}' could not be mapped to an active server. Ensure an MCP server exposing this tool is connected and running.`,
+        });
+        return true; // true = halt the run() loop
+      }
     }
 
     this.stepCount++;
@@ -235,17 +282,20 @@ export class AgentRuntime {
 
     this.messages.push({
       role: 'assistant',
-      content: `I will now execute the ${toolName} tool. Please review and approve the action.`,
+      content: null as any, // Must be null when tool_calls present
       toolCallId: toolCall.id,
+      toolName,
     });
 
-    const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: `${serverId}__${toolName}`, arguments: toolCall.input }]);
+    // Save with BARE tool name (not serverId__toolName) so history stays clean
+    const toolCallPayload = JSON.stringify([{ id: toolCall.id, name: toolName, arguments: toolCall.input }]);
     await this.saveMessage(
-      'assistant', 
-      `I proposed executing ${serverId}__${toolName} (Waiting for approval).`,
+      'assistant',
+      `Proposed: ${toolName}`,
       undefined,
       toolCallPayload,
-      toolCall.id
+      toolCall.id,
+      'pending'  // ── State machine: this proposal is awaiting human decision
     );
 
     this.eventHandler({
@@ -263,7 +313,8 @@ export class AgentRuntime {
     content: string,
     usage?: { inputTokens: number; outputTokens: number },
     toolCalls?: string,
-    toolCallId?: string
+    toolCallId?: string,
+    status?: string,   // ── State machine status for proposal messages
   ): Promise<void> {
     console.log('[Agent] Saving message:', role, 'content length:', content.length);
     const db = getDb();
@@ -276,6 +327,7 @@ export class AgentRuntime {
       content,
       toolCalls,
       toolCallId,
+      status,
       model: role === 'assistant' ? this.config.model : undefined,
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,
@@ -305,6 +357,44 @@ export class AgentRuntime {
       latency,
       timestamp: new Date(),
     });
+  }
+
+  private async generateTitleIfNeeded(userMessage: string): Promise<void> {
+    const session = getSession(this.config.sessionId);
+    if (!session || (session.title && session.title !== 'New Conversation')) {
+      return; // Already has a custom title
+    }
+
+    try {
+      const provider = getProviderForModel(this.config.model);
+      let title = '';
+
+      await provider.chat(
+        this.config.model,
+        [
+          {
+            role: 'system',
+            content: 'You are a title generator. Output ONLY a concise 3-5 word title for the user\'s request. No quotes, no punctuation at the end, no explanation.'
+          },
+          { role: 'user', content: userMessage.substring(0, 300) }
+        ],
+        [], // no tools
+        (delta: StreamDelta) => {
+          if (delta.type === 'text_delta' && delta.content) {
+            title += delta.content;
+          }
+        }
+      );
+
+      title = title.trim().replace(/^["']|["']$/g, '').substring(0, 60);
+      if (title) {
+        updateSession(this.config.sessionId, { title });
+        this.eventHandler({ type: 'session_renamed', sessionId: this.config.sessionId, newTitle: title });
+        console.log('[Agent] Auto-titled session:', title);
+      }
+    } catch (e: any) {
+      console.error('[Agent] Title generation error:', e?.message || e);
+    }
   }
 }
 

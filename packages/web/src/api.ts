@@ -7,7 +7,8 @@ export type AgentEvent =
   | { type: 'message_end'; usage: { inputTokens: number; outputTokens: number } }
   | { type: 'proposal'; id?: string; tool: string; input: Record<string, unknown> }
   | { type: 'error'; message: string }
-  | { type: 'step_count'; count: number };
+  | { type: 'step_count'; count: number }
+  | { type: 'session_renamed'; sessionId: string; newTitle: string };
 
 export async function apiFetch(endpoint: string, options?: RequestInit) {
   // Ensure endpoint starts with a slash

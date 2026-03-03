@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Search, ChevronRight, ChevronDown, Clock, SearchX } from 'lucide-react';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { apiFetch } from '../api';
 
 interface ActivityEntry {
@@ -17,6 +17,13 @@ interface ActivityEntry {
 export default function AuditLog() {
   const [filter, setFilter] = useState<{ serverId?: string; outcome?: string; search?: string }>({});
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [showRawJson, setShowRawJson] = useState(false);
+
+  // Read preference from localStorage (set by Settings page)
+  useEffect(() => {
+    const pref = localStorage.getItem('openmacaw-show-raw-json');
+    setShowRawJson(pref === 'true');
+  }, []);
 
   const toggleRow = (id: string) => {
     setExpandedRows(prev => {
@@ -109,7 +116,7 @@ export default function AuditLog() {
             </thead>
             <tbody className="divide-y divide-white/[0.02]">
               {activities?.map((activity) => {
-                const isExpanded = expandedRows.has(activity.id);
+                const isExpanded = showRawJson || expandedRows.has(activity.id);
                 const latencyColor = activity.latency 
                   ? (activity.latency < 500 ? 'text-green-500' : activity.latency < 2000 ? 'text-yellow-500' : 'text-red-500')
                   : '';

@@ -64,6 +64,12 @@ export const messages = sqliteTable('messages', {
   toolCalls: text('tool_calls'),
   toolResults: text('tool_results'),
   toolCallId: text('tool_call_id'),
+  // ── State machine ────────────────────────────────────────────────────────
+  // pending   = proposal shown to user, awaiting decision
+  // approved  = user clicked Approve (execution in progress)
+  // executed  = tool call completed successfully
+  // denied    = user clicked Deny
+  status: text('status').default('pending'),
   model: text('model'),
   inputTokens: integer('input_tokens'),
   outputTokens: integer('output_tokens'),

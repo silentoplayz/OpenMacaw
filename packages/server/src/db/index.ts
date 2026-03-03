@@ -40,6 +40,24 @@ function loadStore(): void {
       };
     }
   }
+
+  // ── One-time migration: backfill `status` on existing messages ───────────
+  // Any message that has tool_calls but no status is from a pre-Phase-37 session.
+  // Default them to 'executed' so they render as the compact green card, not as
+  // an editable pending proposal on refresh.
+  let migrated = 0;
+  store.messages = (store.messages as any[]).map((m: any) => {
+    if (m.status !== undefined) return m; // already has a status — leave it
+    if (m.tool_calls) {
+      migrated++;
+      return { ...m, status: 'executed' }; // old proposal — treat as done
+    }
+    return m; // regular message — status not relevant
+  });
+  if (migrated > 0) {
+    console.log(`[DB] Migrated ${migrated} legacy tool-call messages → status:'executed'`);
+    saveStore();
+  }
 }
 
 function saveStore(): void {
