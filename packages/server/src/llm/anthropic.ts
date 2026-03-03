@@ -34,7 +34,7 @@ export class AnthropicProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void,
+    onDelta: (delta: StreamDelta) => void | Promise<void>,
     signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const systemMessage = messages.find(m => m.role === 'system');
@@ -66,7 +66,7 @@ export class AnthropicProvider implements LLMProvider {
           for (const tc of toolCalls) {
             content.push({
               type: 'tool_use',
-              id: msg.toolCallId || `call_${Date.now()}`,
+              id: tc.id || msg.toolCallId || `call_${Date.now()}`,
               name: tc.name,
               input: tc.arguments as any,
             });
@@ -140,7 +140,10 @@ export class AnthropicProvider implements LLMProvider {
           } catch (e) {
             console.error('[Anthropic] Failed to parse tool input JSON:', currentToolInputBuffer, e);
           }
-          onDelta({
+          // AWAIT so that approval gates (e.g. Discord reactions) finish before
+          // the provider processes the next tool_use block. Without this, all
+          // tool calls in a parallel batch fire their approval embeds simultaneously.
+          await onDelta({
             type: 'tool_use',
             toolCall: { ...currentToolCall },
           });

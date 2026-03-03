@@ -5,14 +5,14 @@ import { getDb, schema } from '../db/index.js';
 
 function extractToolCall(responseText: string) {
   const match = responseText.match(/```json\s*(\{.*?\})\s*```/s) || responseText.match(/```\s*(\{.*?\})\s*```/s);
-  
+
   const attemptParse = (str: string) => {
     try {
       const parsed = JSON.parse(str);
       if (parsed && typeof parsed.name === 'string' && typeof parsed.arguments === 'object') {
         return parsed;
       }
-    } catch {}
+    } catch { }
     return null;
   };
 
@@ -20,14 +20,14 @@ function extractToolCall(responseText: string) {
     const res = attemptParse(match[1]);
     if (res) return res;
   }
-  
+
   // Fallback: parse entire string if it resembles JSON
   const trimmed = responseText.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-     const res = attemptParse(trimmed);
-     if (res) return res;
+    const res = attemptParse(trimmed);
+    if (res) return res;
   }
-  
+
   return null;
 }
 
@@ -64,7 +64,7 @@ export class OllamaProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void,
+    onDelta: (delta: StreamDelta) => void | Promise<void>,
     signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
@@ -89,7 +89,7 @@ export class OllamaProvider implements LLMProvider {
             role: 'assistant',
             content: msg.content,
             tool_calls: toolCalls.map(tc => ({
-              id: msg.toolCallId || 'call_unknown',
+              id: tc.id || msg.toolCallId || 'call_unknown',
               type: 'function',
               function: {
                 name: tc.name,
@@ -164,7 +164,7 @@ export class OllamaProvider implements LLMProvider {
         console.log('[Ollama] Raw Response Text:', fullText);
 
         if (currentToolCall) {
-          onDelta({
+          await onDelta({
             type: 'tool_use',
             toolCall: { ...currentToolCall },
           });
@@ -173,24 +173,24 @@ export class OllamaProvider implements LLMProvider {
           // Safety Net: The Regex Parser Shim
           const extracted = extractToolCall(fullText);
           if (extracted) {
-             console.log('[Ollama] Safety Net Intercept: Found tool call in raw text via Regex.');
-             
-             // Match against valid tool names to fix missing prefixes (e.g. "list_directory" -> "server-filesystem:list_directory")
-             const validTool = tools.find(t => t.name === extracted.name || t.name.endsWith(':' + extracted.name));
-             const correctName = validTool ? validTool.name : extracted.name;
+            console.log('[Ollama] Safety Net Intercept: Found tool call in raw text via Regex.');
 
-             // 1. Immediately clear the text buffer so nothing is sent to the UI as a standard message
-             onDelta({ type: 'clear_text' } as any);
+            // Match against valid tool names to fix missing prefixes (e.g. "list_directory" -> "server-filesystem:list_directory")
+            const validTool = tools.find(t => t.name === extracted.name || t.name.endsWith(':' + extracted.name));
+            const correctName = validTool ? validTool.name : extracted.name;
 
-             // 2. Fire the tool_use event using the corrected name
-             onDelta({
-               type: 'tool_use',
-               toolCall: {
-                 id: extracted.id || `call_${Date.now()}`,
-                 name: correctName,
-                 input: extracted.arguments || {}
-               }
-             });
+            // 1. Immediately clear the text buffer so nothing is sent to the UI as a standard message
+            onDelta({ type: 'clear_text' } as any);
+
+            // 2. Fire the tool_use event using the corrected name (awaited for sequential approval)
+            await onDelta({
+              type: 'tool_use',
+              toolCall: {
+                id: extracted.id || `call_${Date.now()}`,
+                name: correctName,
+                input: extracted.arguments || {}
+              }
+            });
           }
         }
 

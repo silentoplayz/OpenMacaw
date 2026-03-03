@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url';
 import { loadConfig } from './config.js';
 import { initDatabase } from './db/index.js';
 import { restoreConnections, migrateServerArguments } from './mcp/index.js';
+import { restorePipelinesAsync } from './pipelines/index.js';
+import { ensureDefaultSession } from './agent/index.js';
 import {
   serversRoutes,
   permissionsRoutes,
@@ -18,6 +20,7 @@ import {
   executeRoutes,
   ollamaRoutes,
   registryRoutes,
+  pipelinesRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,6 +44,7 @@ async function buildApp() {
   await fastify.register(executeRoutes);
   await fastify.register(ollamaRoutes);
   await fastify.register(registryRoutes);
+  await fastify.register(pipelinesRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');
@@ -84,6 +88,9 @@ async function start() {
     initDatabase();
     console.log('Database initialized');
 
+    // Ensure there is always at least one session so the chat UI works out of the box
+    ensureDefaultSession();
+
     const config = loadConfig();
     const app = await buildApp();
 
@@ -96,8 +103,9 @@ async function start() {
       try {
         await migrateServerArguments();
         await restoreConnections();
+        await restorePipelinesAsync();
       } catch (err) {
-        console.error('Fatal failure during background MCP restoration:', err);
+        console.error('Fatal failure during background MCP/pipeline restoration:', err);
       }
     })();
   } catch (err) {
