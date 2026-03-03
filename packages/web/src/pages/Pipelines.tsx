@@ -187,7 +187,7 @@ function AddPipelineModal({
   return (
     <>
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg bg-zinc-950 border border-white/10 rounded-xl shadow-2xl">
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg bg-zinc-950 border border-white/10 rounded-xl shadow-[0_0_40px_rgba(0,0,0,0.8)] overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
           <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">New Pipeline</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors text-lg leading-none">&times;</button>
@@ -255,7 +255,7 @@ function AddPipelineModal({
                   value={rawConfig[field.key] ?? ''}
                   onChange={(e) => setRawConfig({ ...rawConfig, [field.key]: e.target.value })}
                   placeholder={field.placeholder}
-                  className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  className="w-full px-3 py-2 bg-black border border-white/5 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                 />
                 {field.hint && (
                   <p className="text-[10px] text-gray-600 mt-0.5">{field.hint}</p>
@@ -265,7 +265,7 @@ function AddPipelineModal({
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-red-400 text-xs bg-red-950/20 border border-red-500/20 rounded-md px-3 py-2">
+            <div className="flex items-center gap-2 text-rose-400 text-xs bg-rose-950/20 border border-rose-500/20 rounded-md px-3 py-2">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
@@ -279,7 +279,7 @@ function AddPipelineModal({
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm font-mono font-bold rounded-md transition-colors"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-xs font-bold font-mono uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] disabled:opacity-50"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             Create Pipeline
@@ -353,7 +353,7 @@ function PipelineRow({
   const sessionTitle = sessions.find((s) => s.id === pipeline.sessionId)?.title ?? pipeline.sessionId ?? '—';
 
   return (
-    <div className="border border-white/5 rounded-lg bg-zinc-900/40 overflow-hidden">
+    <div className="border border-white/5 rounded-lg bg-zinc-950/30 overflow-hidden backdrop-blur-sm transition-all hover:bg-zinc-900/50 hover:border-white/10 group">
       {/* Header row */}
       <div className="flex items-center gap-3 px-4 py-3">
         {/* Status dot */}
@@ -427,7 +427,7 @@ function PipelineRow({
 
       {/* Expanded config editor */}
       {expanded && (
-        <div className="border-t border-white/5 px-4 py-4 space-y-3 bg-black/20">
+        <div className="border-t border-white/5 px-4 py-4 space-y-3 bg-black/40">
           {/* Session picker */}
           <div>
             <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
@@ -481,7 +481,7 @@ function PipelineRow({
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-mono font-bold rounded-md transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-xs font-mono font-bold uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] disabled:opacity-50"
             >
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               Save Changes
@@ -537,7 +537,7 @@ export default function Pipelines() {
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-mono font-bold rounded-md transition-colors"
+          className="flex items-center justify-center gap-2 px-3 py-1.5 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-[10px] font-bold font-mono uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]"
         >
           <Plus className="w-3.5 h-3.5" />
           New Pipeline
@@ -559,7 +559,7 @@ export default function Pipelines() {
             </p>
             <button
               onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-mono font-bold rounded-md transition-colors"
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-cyan-950/30 border border-cyan-500/50 hover:bg-cyan-900/40 text-cyan-400 hover:text-cyan-300 text-[10px] font-bold font-mono uppercase tracking-wider rounded transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] mt-2"
             >
               <Plus className="w-3.5 h-3.5" />
               Create your first pipeline

@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { FORCEFUL_SYSTEM_PROMPT } from './agent/prompts.js';
+import { getDb } from './db/index.js';
+
+
 
 const configSchema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -39,3 +42,24 @@ export function getConfig(): Config {
   }
   return configInstance;
 }
+
+export function getActiveSettings(): Config {
+  const config = getConfig();
+  try {
+    const db = getDb();
+    const settings = db.select('settings').where().all() as {key: string, value: string}[];
+    const modelSetting = settings.find(s => s.key === 'DEFAULT_MODEL');
+    const providerSetting = settings.find(s => s.key === 'DEFAULT_PROVIDER');
+    const promptSetting = settings.find(s => s.key === 'SYSTEM_PROMPT');
+    
+    return {
+      ...config,
+      DEFAULT_MODEL: modelSetting?.value || config.DEFAULT_MODEL,
+      DEFAULT_PROVIDER: (providerSetting?.value as any) || config.DEFAULT_PROVIDER,
+      SYSTEM_PROMPT: promptSetting?.value || config.SYSTEM_PROMPT,
+    };
+  } catch (e) {
+    return config;
+  }
+}
+

@@ -304,7 +304,10 @@ function ApprovalCard({ toolCalls, sessionId, onApprove, onReject }: { toolCalls
         </div>
       )}
       <div className="p-3">
-        <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2">Proposed Actions <span className="text-gray-600">(editable)</span></p>
+        <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2">
+          Proposed Actions {resolvedCalls.length > 1 && <span className="text-cyan-400 font-bold ml-1">({resolvedCalls.length})</span>} 
+          <span className="text-gray-600 ml-1">(editable)</span>
+        </p>
         <div className="space-y-2 mb-3">
           {resolvedCalls.map((call, i) => (
             <div key={i} className="bg-black border border-white/5 rounded overflow-hidden">

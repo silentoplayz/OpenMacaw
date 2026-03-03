@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { type JSONRPCMessage, ListToolsResultSchema, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { Transform } from 'node:stream';
 import type { ToolDefinition } from '../llm/provider.js';
@@ -278,8 +278,7 @@ export class MCPClient {
     try {
       const response = await this.client.request(
         { method: 'tools/list' },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        { parse: (v: unknown) => v } as any,
+        ListToolsResultSchema
       );
       this.tools = ((response as { tools?: { name: string; description?: string; inputSchema: unknown }[] }).tools || []).map(tool => ({
         name: tool.name,
@@ -299,8 +298,7 @@ export class MCPClient {
     if (!this.client || !this.connected) throw new Error('Client not connected');
     return this.client.request(
       { method: 'tools/call', params: { name, arguments: args } },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { parse: (v: unknown) => v } as any,
+      CallToolResultSchema
     );
   }
 

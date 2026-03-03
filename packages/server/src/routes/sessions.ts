@@ -2,7 +2,6 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { createSession, getSession, listSessions, updateSession, deleteSession } from '../agent/session.js';
 import { getDb, schema } from '../db/index.js';
-import { getConfig } from '../config.js';
 
 const createSessionSchema = z.object({
   title: z.string().optional(),
@@ -20,17 +19,9 @@ export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post('/api/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = createSessionSchema.parse(request.body);
     
-    let finalModel = body.model;
-    if (!finalModel) {
-      const db = getDb();
-      const settings = db.select(schema.settings as any).where().all() as any[];
-      const defaultModelSetting = settings.find((s: any) => s.key === 'DEFAULT_MODEL');
-      finalModel = defaultModelSetting?.value || getConfig().DEFAULT_MODEL;
-    }
-
     const session = createSession({
       title: body.title,
-      model: finalModel as string,
+      model: body.model,
       systemPrompt: body.systemPrompt,
       mode: body.mode,
     });

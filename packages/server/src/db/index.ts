@@ -262,6 +262,12 @@ export function initDatabase(): void {
   sqlite.pragma('foreign_keys = ON');
   sqlite.exec(SCHEMA_SQL);
   
+  try {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'pending'");
+  } catch (e) {
+    // Column already exists, safe to ignore
+  }
+
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });
 
   // Migrate from legacy JSON store on first run

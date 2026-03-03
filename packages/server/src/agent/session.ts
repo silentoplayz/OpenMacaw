@@ -1,6 +1,6 @@
 import { getDb, schema } from '../db/index.js';
 import { nanoid } from 'nanoid';
-import { getConfig } from '../config.js';
+import { getActiveSettings } from '../config.js';
 
 export interface SessionData {
   id: string;
@@ -14,19 +14,20 @@ export interface SessionData {
 
 export function createSession(data: {
   title?: string;
-  model: string;
+  model?: string;
   systemPrompt?: string;
   mode?: 'build' | 'plan';
 }): SessionData {
   const db = getDb();
   const now = Date.now();
   const id = nanoid();
+  const config = getActiveSettings();
 
   const session = {
     id,
     title: data.title || 'New Conversation',
-    model: data.model,
-    systemPrompt: data.systemPrompt,
+    model: data.model || config.DEFAULT_MODEL,
+    systemPrompt: data.systemPrompt || config.SYSTEM_PROMPT,
     mode: data.mode || 'build',
     createdAt: now,
     updatedAt: now,
@@ -106,13 +107,7 @@ export function ensureDefaultSession(): void {
   const existing = listSessions();
   if (existing.length > 0) return;
 
-  const config = getConfig();
-  const db = getDb();
-  const settings = db.select(schema.settings as any).where().all() as any[];
-  const modelSetting = settings.find((s: any) => s.key === 'DEFAULT_MODEL');
-  const model = modelSetting?.value || config.DEFAULT_MODEL;
-
-  createSession({ title: 'New Conversation', model });
+  createSession({ title: 'New Conversation' });
   console.log('[Session] Created default session');
 }
 

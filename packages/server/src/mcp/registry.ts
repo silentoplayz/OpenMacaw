@@ -1,6 +1,8 @@
 import { MCPClient } from './client.js';
 import type { ToolDefinition } from '../llm/provider.js';
-import { getDb, schema } from '../db/index.js';
+import { getDrizzleDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { getPermissionForServer, createDefaultPermission } from '../permissions/index.js';
 
 export type ServerStatus = 'stopped' | 'running' | 'error' | 'unhealthy' | 'paused';
@@ -56,8 +58,8 @@ export async function startServer(id: string): Promise<MCPServerInfo> {
     throw new Error(`Server ${id} not found`);
   }
 
-  const db = getDb();
-  const serversData = db.select(schema.servers as any).where((getCol: (col: string) => any) => getCol('id') === id).all() as any[];
+  const db = getDrizzleDb();
+  const serversData = await db.select().from(schema.servers).where(eq(schema.servers.id, id));
 
   if (serversData.length === 0) {
     throw new Error(`Server ${id} not in database`);
@@ -183,10 +185,10 @@ export async function pauseAllServers(): Promise<void> {
 }
 
 export async function restoreConnections(): Promise<void> {
-  const db = getDb();
+  const db = getDrizzleDb();
   let savedServers: any[] = [];
   try {
-    savedServers = db.select(schema.servers as any).where().all() as any[];
+    savedServers = await db.select().from(schema.servers);
   } catch (error) {
     console.error('[MCP] Failed to query databases for saved servers.', error);
     return;
@@ -260,10 +262,10 @@ export async function restoreConnections(): Promise<void> {
 }
 
 export async function migrateServerArguments(): Promise<void> {
-  const db = getDb();
+  const db = getDrizzleDb();
   let savedServers: any[] = [];
   try {
-    savedServers = db.select(schema.servers as any).where().all() as any[];
+    savedServers = await db.select().from(schema.servers);
   } catch (error) {
     return;
   }
@@ -291,9 +293,9 @@ export async function migrateServerArguments(): Promise<void> {
     }
 
     if (needsMigration) {
-      db.update(schema.servers as any)
+      await db.update(schema.servers)
         .set({ args: newArgsStr })
-        .where((getCol: (col: string) => unknown) => getCol('id') === s.id);
+        .where(eq(schema.servers.id, s.id));
       migratedCount++;
     }
   }

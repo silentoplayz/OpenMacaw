@@ -1,6 +1,5 @@
 import { nanoid } from 'nanoid';
 import { getDb, schema } from '../db/index.js';
-import { getConfig } from '../config.js';
 import { createSession, getSession } from '../agent/session.js';
 import type { PipelineRecord, PipelineType, PipelineConfig, PipelineStatus } from './types.js';
 import { DiscordPipeline } from './discord.js';
@@ -135,13 +134,7 @@ export async function startPipelineAsync(id: string): Promise<void> {
   // Auto-provision a dedicated session for this pipeline if one doesn't exist yet.
   // This means pipelines are fully self-contained — no manual session linking required.
   if (!record.sessionId || !getSession(record.sessionId)) {
-    const config = getConfig();
-    const db = getDb();
-    const settings = db.select(schema.settings as any).where().all() as any[];
-    const modelSetting = settings.find((s: any) => s.key === 'DEFAULT_MODEL');
-    const model = modelSetting?.value || config.DEFAULT_MODEL;
-
-    const session = createSession({ title: `${record.name} Conversation`, model });
+    const session = createSession({ title: `${record.name} Conversation` });
     updatePipeline(id, { sessionId: session.id });
     record = getPipeline(id)!;
     console.log(`[PipelineManager] Auto-created session ${session.id} for pipeline "${record.name}"`);
