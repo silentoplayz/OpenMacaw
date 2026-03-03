@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
-  ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun, ShieldCheck, Settings2, AlertOctagon
+  ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun, ShieldCheck, Settings2, AlertOctagon, Workflow
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -327,6 +327,7 @@ function App() {
   const navItems = [
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/servers', label: 'Servers', icon: Server },
+    { path: '/pipelines', label: 'Pipelines', icon: Workflow },
     { path: '/activity', label: 'Audit Log', icon: Activity },
     { path: '/settings', label: 'Settings', icon: Settings },
   ];

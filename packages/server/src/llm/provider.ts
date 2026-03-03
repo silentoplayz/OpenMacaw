@@ -29,12 +29,16 @@ export interface StreamDelta {
 export interface LLMProvider {
   name: string;
   models: string[];
-  
+
   chat(
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void,
+    // Returning a Promise allows callers to await tool_use handling so that
+    // approval gates (e.g. Discord reactions) complete before the provider
+    // processes the next content block. For text_delta / message_end the
+    // return value is ignored and void is fine.
+    onDelta: (delta: StreamDelta) => void | Promise<void>,
     signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }>;
 }

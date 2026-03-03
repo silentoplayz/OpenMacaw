@@ -8,6 +8,7 @@ import Servers from './pages/Servers';
 import Permissions from './pages/Permissions';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
+import Pipelines from './pages/Pipelines';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ createRoot(document.getElementById('root')!).render(
           </Route>
           <Route path="servers" element={<Servers />} />
           <Route path="permissions/:serverId" element={<Permissions />} />
+          <Route path="pipelines" element={<Pipelines />} />
           <Route path="activity" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
         </Route>

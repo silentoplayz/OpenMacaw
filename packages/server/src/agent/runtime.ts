@@ -1,5 +1,5 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
-import { getAllTools } from '../mcp/registry.js';
+import { getAllTools, getMCPServer } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
@@ -13,6 +13,26 @@ export interface AgentConfig {
   systemPrompt?: string;
   mode: AgentMode;
   maxSteps: number;
+  /**
+   * When true, MCP tool calls are executed immediately without emitting a
+   * `proposal` event or waiting for human approval. Used by pipeline adapters
+   * (Discord, Telegram, LINE) which have no approval UI.
+   */
+  autoExecute?: boolean;
+
+  /**
+   * Optional async gate called before each tool execution when autoExecute is
+   * true. Return `true` to allow the call, `false` to deny it. When omitted,
+   * all permitted tool calls execute without further confirmation.
+   *
+   * Used by the Discord pipeline to send an approval embed and wait for a
+   * reaction before proceeding.
+   */
+  approvalFn?: (call: {
+    serverId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }) => Promise<boolean>;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
@@ -128,7 +148,11 @@ export class AgentRuntime {
               this.eventHandler({ type: 'text_delta', content: delta.content });
             } else if (delta.type === 'tool_use' && delta.toolCall) {
               currentTurnHadToolCall = true;
-              interceptedProposal = await this.handleToolCall(delta.toolCall);
+              // Pass the accumulated text so the assistant message stored in the
+              // DB includes any prose the model emitted before the tool call.
+              interceptedProposal = await this.handleToolCall(delta.toolCall, deltaText);
+              // Clear so a second tool call in the same turn doesn't re-emit the same text.
+              deltaText = '';
             } else if ((delta as any).type === 'clear_text') {
               deltaText = '';
             } else if (delta.type === 'message_end' && delta.usage) {
@@ -181,7 +205,7 @@ export class AgentRuntime {
   }
 
   // Returns true if execution should halt because a proposal was emitted.
-  private async handleToolCall(toolCall: ToolCall): Promise<boolean> {
+  private async handleToolCall(toolCall: ToolCall, precedingText = ''): Promise<boolean> {
     const { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
     console.log('[Agent] Tool call:', toolName, 'from server:', serverId);
 
@@ -232,7 +256,12 @@ export class AgentRuntime {
       return false;
     }
 
+    // ── Auto-execute mode (pipelines) ─────────────────────────────────────────
+    if (this.config.autoExecute) {
+      return await this.executeToolDirectly(toolCall, serverId, toolName, precedingText);
+    }
 
+    // ── Proposal mode (web UI — requires human approval) ─────────────────────
     this.messages.push({
       role: 'assistant',
       content: `I will now execute the ${toolName} tool. Please review and approve the action.`,
@@ -256,6 +285,106 @@ export class AgentRuntime {
     });
 
     return true;
+  }
+
+  /** Execute a tool call immediately — used in autoExecute (pipeline) mode. */
+  private async executeToolDirectly(
+    toolCall: ToolCall,
+    serverId: string,
+    toolName: string,
+    precedingText = ''
+  ): Promise<boolean> {
+    // ── CRITICAL: record the assistant's tool_use BEFORE any tool_result ──────
+    // The Anthropic API requires every tool_result to be immediately preceded
+    // by an assistant message containing the matching tool_use block. Without
+    // this, subsequent turns get a 400 "unexpected tool_use_id" error.
+    const toolCallPayload = JSON.stringify([{
+      id: toolCall.id,
+      name: toolCall.name,
+      arguments: toolCall.input,
+    }]);
+    this.messages.push({
+      role: 'assistant',
+      content: precedingText,
+      toolCallId: toolCall.id,
+      toolCalls: toolCallPayload,
+    });
+    await this.saveMessage('assistant', precedingText, undefined, toolCallPayload, toolCall.id);
+
+    const server = getMCPServer(serverId);
+
+    if (!server || !server.client.isConnected()) {
+      const reason = `MCP server "${serverId}" is not connected`;
+      console.log('[Agent] Auto-execute FAILED:', reason);
+      this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+      this.messages.push({
+        role: 'tool',
+        content: `Tool execution failed: ${reason}`,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', `Tool execution failed: ${reason}`, undefined, undefined, toolCall.id);
+      return false;
+    }
+
+    // Ask the approval gate (if any) before executing.
+    if (this.config.approvalFn) {
+      let approved: boolean;
+      try {
+        approved = await this.config.approvalFn({ serverId, toolName, input: toolCall.input });
+      } catch (err) {
+        approved = false;
+        console.error('[Agent] approvalFn threw:', err);
+      }
+
+      if (!approved) {
+        const reason = 'Denied by user';
+        console.log('[Agent] Auto-execute denied by approvalFn:', toolName);
+        this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+        await this.logActivity(serverId, toolName, toolCall.input, 'denied', reason);
+        const denyContent = `Tool call denied by user.`;
+        this.messages.push({ role: 'tool', content: denyContent, toolCallId: toolCall.id, toolName });
+        await this.saveMessage('tool', denyContent, undefined, undefined, toolCall.id);
+        return false;
+      }
+    }
+
+    const startTime = Date.now();
+    try {
+      const result = await server.client.callTool(toolName, toolCall.input);
+      const latency = Date.now() - startTime;
+      const resultStr = JSON.stringify(result);
+
+      console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
+      this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
+      await this.logActivity(serverId, toolName, toolCall.input, 'allowed', undefined, latency);
+
+      const toolResultContent = `Tool result: ${resultStr}`;
+      this.messages.push({
+        role: 'tool',
+        content: toolResultContent,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', toolResultContent, undefined, undefined, toolCall.id);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[Agent] Auto-execute ERROR:', toolName, errMsg);
+      this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason: errMsg });
+      await this.logActivity(serverId, toolName, toolCall.input, 'denied', errMsg);
+
+      const failContent = `Tool execution failed: ${errMsg}`;
+      this.messages.push({
+        role: 'tool',
+        content: failContent,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', failContent, undefined, undefined, toolCall.id);
+    }
+
+    // Do NOT halt the loop — let the agent continue to produce a text response.
+    return false;
   }
 
   private async saveMessage(

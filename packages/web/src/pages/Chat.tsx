@@ -128,8 +128,9 @@ export default function Chat() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId || null);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const isStreamingRef = useRef(false);
   const [streamingContent, setStreamingContent] = useState('');
-  const [mockMessages, setMockMessages] = useState<Message[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [showGuardianOverlay, setShowGuardianOverlay] = useState(false);
   
@@ -146,6 +147,7 @@ export default function Chat() {
   });
 
   useEffect(() => {
+    isStreamingRef.current = isStreaming;
     window.dispatchEvent(new CustomEvent('openmacaw:streaming', { detail: isStreaming }));
   }, [isStreaming]);
 
@@ -202,6 +204,17 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentSession?.messages, streamingContent]);
 
+  // Clear optimistic messages only once the server has confirmed them.
+  // This prevents the flash where the user message disappears between
+  // setOptimisticMessages([]) and the session refetch completing.
+  useEffect(() => {
+    if (optimisticMessages.length === 0) return;
+    const serverContents = new Set((currentSession?.messages ?? []).map((m: Message) => m.content));
+    if (optimisticMessages.every(m => serverContents.has(m.content))) {
+      setOptimisticMessages([]);
+    }
+  }, [currentSession?.messages]);
+
   const connectWebSocket = useCallback(() => {
     const ws = new WebSocket(getWsUrl('/ws/chat'));
     
@@ -217,11 +230,11 @@ export default function Chat() {
 
       switch (data.type) {
         case 'text_delta':
-          if (!isStreaming) setIsStreaming(true);
+          if (!isStreamingRef.current) setIsStreaming(true);
           setStreamingContent(prev => prev + (data.content || ''));
           break;
         case 'tool_call_start':
-          if (!isStreaming) setIsStreaming(true);
+          if (!isStreamingRef.current) setIsStreaming(true);
           setStreamingContent(prev => prev + `\n[Calling tool: ${data.tool}]`);
           break;
         case 'tool_call_result':
@@ -234,6 +247,9 @@ export default function Chat() {
         case 'message_end':
           setIsStreaming(false);
           setStreamingContent('');
+          // Do NOT clear optimisticMessages here — the session refetch is async.
+          // Clearing now causes the user message to vanish for ~300 ms.
+          // The useEffect below clears them once the server data has them.
           queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
           break;
           case 'proposal':
@@ -295,28 +311,31 @@ export default function Chat() {
   const sendMessage = () => {
     if (!input.trim() || !currentSessionId || isStreaming || !wsRef.current) return;
 
+    const messageText = input.trim();
+
+    // Optimistically show the user message immediately
+    setOptimisticMessages(prev => [
+      ...prev,
+      { id: `optimistic-${Date.now()}`, role: 'user', content: messageText },
+    ]);
+
     setIsStreaming(true);
     setStreamingContent('');
+    setInput('');
+
+    const payload = JSON.stringify({
+      type: 'chat',
+      sessionId: currentSessionId,
+      message: messageText,
+    });
 
     if (wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'chat',
-        sessionId: currentSessionId,
-        message: input,
-      }));
-      setInput('');
+      wsRef.current.send(payload);
     } else {
       // Re-connect and send if closed
       const ws = connectWebSocket();
       wsRef.current = ws;
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          type: 'chat',
-          sessionId: currentSessionId,
-          message: input,
-        }));
-        setInput('');
-      };
+      ws.onopen = () => ws.send(payload);
     }
   };
 
@@ -327,8 +346,12 @@ export default function Chat() {
     }
   };
 
-  const allMessages = (currentSession?.messages || []).map(hydrateMessage);
-  if (isStreaming) {
+  const serverMessages = (currentSession?.messages || []).map(hydrateMessage);
+  // Deduplicate: hide optimistic messages once the server has persisted them
+  const serverContents = new Set(serverMessages.map(m => m.content));
+  const pendingOptimistic = optimisticMessages.filter(m => !serverContents.has(m.content));
+  const allMessages = [...serverMessages, ...pendingOptimistic];
+  if (isStreaming && streamingContent) {
     allMessages.push({
       id: 'streaming',
       role: 'assistant',
