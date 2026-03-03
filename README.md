@@ -28,6 +28,75 @@ At the core of OpenMacaw lies its dual-phase architecture. Rather than relying o
 
 This architecture drastically reduces hallucinations and ensures the planned workflow aligns exactly with your goal before a single destructive action is taken.
 
+## 🐳 Docker Deployment
+
+### Prerequisites
+- [Docker](https://docs.docker.com/get-docker/) (v20+) and [Docker Compose](https://docs.docker.com/compose/install/) installed.
+
+### Quick Start (Recommended)
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/OpenMacaw/OpenMacaw.git
+   cd OpenMacaw
+   ```
+
+2. **Configure environment variables:**
+
+   Create a `.env` file in the project root (all values are optional — see the table below):
+
+   ```env
+   AUTH_TOKEN=your_secret_token
+   ANTHROPIC_API_KEY=sk-ant-...
+   OPENAI_API_KEY=sk-...
+   OLLAMA_BASE_URL=http://localhost:11434
+   DEFAULT_MODEL=claude-3-5-sonnet-20241022
+   DEFAULT_PROVIDER=anthropic
+   ```
+
+   | Variable | Default | Description |
+   |---|---|---|
+   | `AUTH_TOKEN` | *(none)* | Optional token to protect the API |
+   | `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key |
+   | `OPENAI_API_KEY` | *(none)* | OpenAI API key |
+   | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+   | `DEFAULT_MODEL` | `claude-3-5-sonnet-20241022` | Default LLM model |
+   | `DEFAULT_PROVIDER` | `anthropic` | Default LLM provider |
+
+3. **Start the application:**
+   ```bash
+   docker compose up -d
+   ```
+
+   The app will be available at **[http://localhost:3000](http://localhost:3000)**.
+   Data is persisted in the `./data` directory on your host.
+
+4. **Stop the application:**
+   ```bash
+   docker compose down
+   ```
+
+### Manual Docker Build & Run
+
+If you prefer to build and run without Compose:
+
+```bash
+# Build the image
+docker build -t openmacaw .
+
+# Run the container
+docker run -d \
+  -p 3000:3000 \
+  -v $(pwd)/data:/data \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  --restart unless-stopped \
+  openmacaw
+```
+
+> **Note:** On Windows PowerShell, replace `$(pwd)` with `${PWD}`.
+
+---
+
 ## 🗺️ Roadmap
 - [ ] **Phase 1:** Core Rust daemon integration & Planner-Executor data structures.
 - [ ] **Phase 2:** Cross-platform Accessibility hooks and environment observation implementation.
