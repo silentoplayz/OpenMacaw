@@ -11,7 +11,7 @@ const configSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434'),
   
-  DEFAULT_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
+  DEFAULT_MODEL: z.string().default('claude-sonnet-4-5-20250929'),
   DEFAULT_PROVIDER: z.enum(['anthropic', 'openai', 'ollama']).default('anthropic'),
   
   MAX_STEPS: z.coerce.number().default(50),

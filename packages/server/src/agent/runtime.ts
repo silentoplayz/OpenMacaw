@@ -1,9 +1,11 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
 import { looksLikeHallucinatedAction } from '../llm/ollama.js';
-import { getAllTools, findServerIdForTool } from '../mcp/registry.js';
+import { getAllTools, findServerIdForTool, getMCPServer } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
 import { getConfig } from '../config.js';
-import { getDb, schema } from '../db/index.js';
+import { getDrizzleDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { getSession, updateSession } from './session.js';
 
@@ -15,6 +17,26 @@ export interface AgentConfig {
   systemPrompt?: string;
   mode: AgentMode;
   maxSteps: number;
+  /**
+   * When true, MCP tool calls are executed immediately without emitting a
+   * `proposal` event or waiting for human approval. Used by pipeline adapters
+   * (Discord, Telegram, LINE) which have no approval UI.
+   */
+  autoExecute?: boolean;
+
+  /**
+   * Optional async gate called before each tool execution when autoExecute is
+   * true. Return `true` to allow the call, `false` to deny it. When omitted,
+   * all permitted tool calls execute without further confirmation.
+   *
+   * Used by the Discord pipeline to send an approval embed and wait for a
+   * reaction before proceeding.
+   */
+  approvalFn?: (call: {
+    serverId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }) => Promise<boolean>;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
@@ -50,11 +72,10 @@ export class AgentRuntime {
     this.messages = [];
   }
 
-  private loadHistory(): void {
-    const db = getDb();
-    const history = db.select(schema.messages as any)
-      .where((getCol: (col: string) => any) => getCol('sessionId') === this.config.sessionId)
-      .all() as any[];
+  private async loadHistory(): Promise<void> {
+    const db = getDrizzleDb();
+    const history = await db.select().from(schema.messages)
+      .where(eq(schema.messages.sessionId, this.config.sessionId));
 
     if (history.length === 0) {
       if (this.config.systemPrompt) {
@@ -66,8 +87,8 @@ export class AgentRuntime {
     const raw: Message[] = history.map(msg => ({
       role: msg.role as Message['role'],
       content: msg.content,
-      toolCalls: msg.toolCalls,
-      toolCallId: msg.toolCallId,
+      toolCalls: msg.toolCalls || undefined,
+      toolCallId: msg.toolCallId || undefined,
     }));
 
     // Collect all tool_use IDs that exist in assistant messages so we can
@@ -99,7 +120,7 @@ export class AgentRuntime {
 
   async run(userMessage?: string): Promise<void> {
     // Load conversation history so Claude has context from previous turns
-    this.loadHistory();
+    await this.loadHistory();
 
     if (userMessage) {
       console.log('[Agent] Received user message:', userMessage.substring(0, 50));
@@ -136,7 +157,11 @@ export class AgentRuntime {
               this.eventHandler({ type: 'text_delta', content: delta.content });
             } else if (delta.type === 'tool_use' && delta.toolCall) {
               currentTurnHadToolCall = true;
-              interceptedProposal = await this.handleToolCall(delta.toolCall);
+              // Pass the accumulated text so the assistant message stored in the
+              // DB includes any prose the model emitted before the tool call.
+              interceptedProposal = await this.handleToolCall(delta.toolCall, deltaText);
+              // Clear so a second tool call in the same turn doesn't re-emit the same text.
+              deltaText = '';
             } else if ((delta as any).type === 'clear_text') {
               deltaText = '';
             } else if (delta.type === 'message_end' && delta.usage) {
@@ -216,7 +241,7 @@ export class AgentRuntime {
   }
 
   // Returns true if execution should halt because a proposal was emitted.
-  private async handleToolCall(toolCall: ToolCall): Promise<boolean> {
+  private async handleToolCall(toolCall: ToolCall, precedingText = ''): Promise<boolean> {
     let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
     console.log('[Agent] Tool call (raw):', toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
 
@@ -279,7 +304,12 @@ export class AgentRuntime {
       return false;
     }
 
+    // ── Auto-execute mode (pipelines) ─────────────────────────────────────────
+    if (this.config.autoExecute) {
+      return await this.executeToolDirectly(toolCall, serverId, toolName, precedingText);
+    }
 
+    // ── Proposal mode (web UI — requires human approval) ─────────────────────
     this.messages.push({
       role: 'assistant',
       content: null as any, // Must be null when tool_calls present
@@ -308,6 +338,106 @@ export class AgentRuntime {
     return true;
   }
 
+  /** Execute a tool call immediately — used in autoExecute (pipeline) mode. */
+  private async executeToolDirectly(
+    toolCall: ToolCall,
+    serverId: string,
+    toolName: string,
+    precedingText = ''
+  ): Promise<boolean> {
+    // ── CRITICAL: record the assistant's tool_use BEFORE any tool_result ──────
+    // The Anthropic API requires every tool_result to be immediately preceded
+    // by an assistant message containing the matching tool_use block. Without
+    // this, subsequent turns get a 400 "unexpected tool_use_id" error.
+    const toolCallPayload = JSON.stringify([{
+      id: toolCall.id,
+      name: toolCall.name,
+      arguments: toolCall.input,
+    }]);
+    this.messages.push({
+      role: 'assistant',
+      content: precedingText,
+      toolCallId: toolCall.id,
+      toolCalls: toolCallPayload,
+    });
+    await this.saveMessage('assistant', precedingText, undefined, toolCallPayload, toolCall.id);
+
+    const server = getMCPServer(serverId);
+
+    if (!server || !server.client.isConnected()) {
+      const reason = `MCP server "${serverId}" is not connected`;
+      console.log('[Agent] Auto-execute FAILED:', reason);
+      this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+      this.messages.push({
+        role: 'tool',
+        content: `Tool execution failed: ${reason}`,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', `Tool execution failed: ${reason}`, undefined, undefined, toolCall.id);
+      return false;
+    }
+
+    // Ask the approval gate (if any) before executing.
+    if (this.config.approvalFn) {
+      let approved: boolean;
+      try {
+        approved = await this.config.approvalFn({ serverId, toolName, input: toolCall.input });
+      } catch (err) {
+        approved = false;
+        console.error('[Agent] approvalFn threw:', err);
+      }
+
+      if (!approved) {
+        const reason = 'Denied by user';
+        console.log('[Agent] Auto-execute denied by approvalFn:', toolName);
+        this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+        await this.logActivity(serverId, toolName, toolCall.input, 'denied', reason);
+        const denyContent = `Tool call denied by user.`;
+        this.messages.push({ role: 'tool', content: denyContent, toolCallId: toolCall.id, toolName });
+        await this.saveMessage('tool', denyContent, undefined, undefined, toolCall.id);
+        return false;
+      }
+    }
+
+    const startTime = Date.now();
+    try {
+      const result = await server.client.callTool(toolName, toolCall.input);
+      const latency = Date.now() - startTime;
+      const resultStr = JSON.stringify(result);
+
+      console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
+      this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
+      await this.logActivity(serverId, toolName, toolCall.input, 'allowed', undefined, latency);
+
+      const toolResultContent = `Tool result: ${resultStr}`;
+      this.messages.push({
+        role: 'tool',
+        content: toolResultContent,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', toolResultContent, undefined, undefined, toolCall.id);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[Agent] Auto-execute ERROR:', toolName, errMsg);
+      this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason: errMsg });
+      await this.logActivity(serverId, toolName, toolCall.input, 'denied', errMsg);
+
+      const failContent = `Tool execution failed: ${errMsg}`;
+      this.messages.push({
+        role: 'tool',
+        content: failContent,
+        toolCallId: toolCall.id,
+        toolName,
+      });
+      await this.saveMessage('tool', failContent, undefined, undefined, toolCall.id);
+    }
+
+    // Do NOT halt the loop — let the agent continue to produce a text response.
+    return false;
+  }
+
   private async saveMessage(
     role: 'user' | 'assistant' | 'tool',
     content: string,
@@ -317,10 +447,10 @@ export class AgentRuntime {
     status?: string,   // ── State machine status for proposal messages
   ): Promise<void> {
     console.log('[Agent] Saving message:', role, 'content length:', content.length);
-    const db = getDb();
+    const db = getDrizzleDb();
     const messageId = nanoid();
 
-    db.insert(schema.messages as any).values({
+    await db.insert(schema.messages).values({
       id: messageId,
       sessionId: this.config.sessionId,
       role,
@@ -331,7 +461,7 @@ export class AgentRuntime {
       model: role === 'assistant' ? this.config.model : undefined,
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,
-      createdAt: Date.now(),
+      createdAt: new Date(),
     });
     console.log('[Agent] Message saved:', messageId);
   }
@@ -344,9 +474,9 @@ export class AgentRuntime {
     reason?: string,
     latency?: number
   ): Promise<void> {
-    const db = getDb();
+    const db = getDrizzleDb();
     
-    db.insert(schema.activityLog as any).values({
+    await db.insert(schema.activityLog).values({
       id: nanoid(),
       sessionId: this.config.sessionId,
       serverId,

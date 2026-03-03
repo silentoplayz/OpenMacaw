@@ -1,5 +1,6 @@
 import { getDb, schema } from '../db/index.js';
 import { nanoid } from 'nanoid';
+import { getConfig } from '../config.js';
 
 export interface SessionData {
   id: string;
@@ -96,3 +97,22 @@ export function deleteSession(id: string): void {
   const db = getDb();
   db.delete(schema.sessions as any).where((getCol: (col: string) => any) => getCol('id') === id);
 }
+
+/**
+ * Ensures at least one session exists in the database.
+ * Called at server startup so the web UI always has a conversation to open.
+ */
+export function ensureDefaultSession(): void {
+  const existing = listSessions();
+  if (existing.length > 0) return;
+
+  const config = getConfig();
+  const db = getDb();
+  const settings = db.select(schema.settings as any).where().all() as any[];
+  const modelSetting = settings.find((s: any) => s.key === 'DEFAULT_MODEL');
+  const model = modelSetting?.value || config.DEFAULT_MODEL;
+
+  createSession({ title: 'New Conversation', model });
+  console.log('[Session] Created default session');
+}
+
