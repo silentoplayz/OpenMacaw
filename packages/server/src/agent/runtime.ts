@@ -284,7 +284,8 @@ export class AgentRuntime {
       toolInput: toolCall.input,
     });
 
-    if (!permResult.allowed) {
+    // ── Three-verdict routing ─────────────────────────────────────────────────
+    if (permResult.verdict === 'DENY') {
       console.log('[Agent] DENIED by permission guard:', permResult.reason);
       this.eventHandler({
         type: 'tool_call_result',
@@ -302,6 +303,12 @@ export class AgentRuntime {
       });
 
       return false;
+    }
+
+    // ── ALLOW_SILENT: trusted zone — run immediately, no human pause ──────────
+    if (permResult.verdict === 'ALLOW_SILENT') {
+      console.log('[Agent] ALLOW_SILENT: Trusted zone hit for', toolName);
+      return await this.executeToolDirectly(toolCall, serverId, toolName, precedingText, true);
     }
 
     // ── Auto-execute mode (pipelines) ─────────────────────────────────────────
@@ -338,12 +345,13 @@ export class AgentRuntime {
     return true;
   }
 
-  /** Execute a tool call immediately — used in autoExecute (pipeline) mode. */
+  /** Execute a tool call immediately — used in autoExecute (pipeline) mode and ALLOW_SILENT (trusted zone). */
   private async executeToolDirectly(
     toolCall: ToolCall,
     serverId: string,
     toolName: string,
-    precedingText = ''
+    precedingText = '',
+    silent = false,     // true = triggered by ALLOW_SILENT verdict
   ): Promise<boolean> {
     // ── CRITICAL: record the assistant's tool_use BEFORE any tool_result ──────
     // The Anthropic API requires every tool_result to be immediately preceded
@@ -408,7 +416,7 @@ export class AgentRuntime {
 
       console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
       this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
-      await this.logActivity(serverId, toolName, toolCall.input, 'allowed', undefined, latency);
+      await this.logActivity(serverId, toolName, toolCall.input, silent ? 'auto_approved' : 'allowed', undefined, latency);
 
       const toolResultContent = `Tool result: ${resultStr}`;
       this.messages.push({
@@ -470,7 +478,7 @@ export class AgentRuntime {
     serverId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
-    outcome: 'allowed' | 'denied',
+    outcome: 'allowed' | 'denied' | 'auto_approved',
     reason?: string,
     latency?: number
   ): Promise<void> {

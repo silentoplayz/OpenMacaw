@@ -71,7 +71,7 @@ export async function interceptToolCallAsync(
     toolInput: toolCall.input,
   });
 
-  if (!permResult.allowed) {
+  if (permResult.verdict === 'DENY') {
     const reason = permResult.reason ?? 'Permission denied';
     console.warn(`[ToolInterceptor] DENIED by PermissionGuard: ${reason}`);
     wsEmit({ type: 'tool_call_start', tool: toolName, server: serverId, input: toolCall.input });
@@ -341,7 +341,7 @@ async function logActivity(
   serverId: string,
   toolName: string,
   toolInput: Record<string, unknown>,
-  outcome: 'allowed' | 'denied',
+  outcome: 'allowed' | 'denied' | 'auto_approved',
   reason?: string,
   latency?: number
 ): Promise<void> {

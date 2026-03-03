@@ -8,7 +8,7 @@ interface ActivityEntry {
   serverId: string;
   toolName: string;
   toolInput: string;
-  outcome: 'allowed' | 'denied';
+  outcome: 'allowed' | 'denied' | 'auto_approved';
   reason?: string;
   latency?: number;
   timestamp: string;
@@ -94,6 +94,7 @@ export default function AuditLog() {
           >
             <option value="">* (ALL_OUTCOMES)</option>
             <option value="allowed">ALLOWED</option>
+            <option value="auto_approved">⚡ AUTO</option>
             <option value="denied">DENIED</option>
           </select>
         </div>
@@ -136,7 +137,16 @@ export default function AuditLog() {
                         @{serverMap.get(activity.serverId) || activity.serverId}
                       </td>
                       <td className="px-3 py-2">
-                        {activity.outcome === 'allowed' ? (
+                        {activity.outcome === 'auto_approved' ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">⚡ AUTO</span>
+                              {activity.latency && (
+                                <span className={`flex items-center gap-1 ${latencyColor} opacity-80 text-[10px]`}>
+                                  <Clock className="w-3 h-3" /> {activity.latency}ms
+                                </span>
+                              )}
+                            </div>
+                        ) : activity.outcome === 'allowed' ? (
                             <div className="flex items-center gap-2">
                               <span className="text-green-500">200 ALLOWED</span>
                               {activity.latency && (

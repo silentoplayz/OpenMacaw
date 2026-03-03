@@ -72,4 +72,12 @@ export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
     deleteSession(id);
     return reply.send({ success: true });
   });
+
+  // DELETE /api/sessions/:id/messages — clear all messages for a session (used by /clear slash command)
+  fastify.delete('/api/sessions/:id/messages', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params;
+    const db = getDb();
+    db.delete(schema.messages as any).where((col: (k: string) => unknown) => col('sessionId') === id);
+    return reply.send({ success: true, cleared: true });
+  });
 }

@@ -126,7 +126,7 @@ export async function executeStep(
                         toolInput: delta.toolCall.input,
                     });
 
-                    if (!permResult.allowed) {
+                    if (permResult.verdict === 'DENY') {
                         console.warn(`[ExecutorAgent] DENIED by PermissionGuard: ${permResult.reason}`);
                         wsEmit({ type: 'tool_call_result', outcome: 'denied', reason: permResult.reason });
                         rawOutput += `\n[Tool call denied by PermissionGuard: ${permResult.reason}]`;

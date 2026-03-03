@@ -1,5 +1,6 @@
 import { getPermissionForServer, type ServerPermission } from './store.js';
 import { getMCPServer } from '../mcp/registry.js';
+import { resolve as resolvePath, relative as relativePath, isAbsolute } from 'node:path';
 
 export interface PermissionContext {
   serverId: string;
@@ -7,10 +8,29 @@ export interface PermissionContext {
   toolInput: Record<string, unknown>;
 }
 
+// ── Verdict system ────────────────────────────────────────────────────────────
+// DENY           = blocked by policy, halt immediately
+// REQUIRE_APPROVAL = pause and wait for human click (default)
+// ALLOW_SILENT   = auto-execute without prompt (opt-in via Trust Policy)
+export type PermissionVerdict = 'ALLOW_SILENT' | 'REQUIRE_APPROVAL' | 'DENY';
+
 export interface PermissionResult {
-  allowed: boolean;
+  verdict: PermissionVerdict;
   reason?: string;
 }
+
+// ── Tool classification ───────────────────────────────────────────────────────
+// Safe reads: may be silenced when path is trusted
+const SAFE_READ_TOOLS = new Set([
+  'read_file', 'read_directory', 'list_directory', 'read_text_file',
+  'read_multiple_files', 'get_file_info',
+]);
+
+// Destructive: MUST ALWAYS require approval — never silenced
+const DESTRUCTIVE_TOOLS = new Set([
+  'write_file', 'create_file', 'delete_file', 'delete_directory',
+  'create_directory', 'move_file', 'rename_file',
+]);
 
 const toolNameToType: Record<string, string> = {
   // Filesystem tools
@@ -55,16 +75,16 @@ export function evaluatePermission(context: PermissionContext): PermissionResult
 
   const server = getMCPServer(serverId);
   if (!server) {
-    return { allowed: false, reason: 'Server not connected or not found' };
+    return { verdict: 'DENY', reason: 'Server not connected or not found' };
   }
 
   if (server.info.status !== 'running') {
-    return { allowed: false, reason: 'Server is not running' };
+    return { verdict: 'DENY', reason: 'Server is not running' };
   }
 
   const permission = getPermissionForServer(serverId);
   if (!permission) {
-    return { allowed: false, reason: 'No permissions configured for this server' };
+    return { verdict: 'DENY', reason: 'No permissions configured for this server' };
   }
 
   const toolType = toolNameToType[toolName] || 'unknown';
@@ -90,10 +110,39 @@ export function evaluatePermission(context: PermissionContext): PermissionResult
   }
 
   if ('env' in toolInput || 'environment' in toolInput) {
-    return { allowed: false, reason: 'Environment variable access is permanently disabled' };
+    return { verdict: 'DENY', reason: 'Environment variable access is permanently disabled' };
   }
 
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
+}
+
+// ── Path utilities ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a path (possibly relative) to an absolute path using process.cwd().
+ * Handles `.`, `./foo`, `../foo`, and plain absolute paths.
+ */
+function resolveIncomingPath(p: string): string {
+  // Normalise back-slashes first (Windows paths from LLM outputs)
+  const forward = p.replace(/\\/g, '/');
+  if (isAbsolute(forward)) return resolvePath(forward);
+  // Relative → resolve against the server process CWD
+  return resolvePath(process.cwd(), forward);
+}
+
+/**
+ * Returns true if `child` is inside (or equal to) `parent`.
+ * Uses path.relative(), which correctly handles edge-cases like:
+ *   parent=/home/user/project, child=/home/user/project-other → FALSE
+ *   parent=/home/user/project, child=/home/user/project/src   → TRUE
+ *   parent=/home/user/project, child=/home/user/project       → TRUE
+ */
+function isPathUnder(child: string, parent: string): boolean {
+  // Wildcard: '/' trusts everything
+  if (parent === '/') return true;
+  const rel = relativePath(parent, child);
+  // rel starts with '..' → child is outside parent
+  return !rel.startsWith('..');
 }
 
 function evaluateFilesystemPermission(
@@ -101,83 +150,100 @@ function evaluateFilesystemPermission(
   toolName: string,
   input: Record<string, unknown>
 ): PermissionResult {
-  const path = (input.path as string) || (input.file_path as string);
-  if (!path) {
-    return { allowed: false, reason: 'No path provided in tool input' };
+  const rawPath = (input.path as string) || (input.file_path as string);
+  if (!rawPath) {
+    return { verdict: 'DENY', reason: 'No path provided in tool input' };
   }
 
-  const normalizedPath = path.replace(/\\/g, '/');
+  // Resolve everything to absolute so string comparisons are accurate
+  const absPath = resolveIncomingPath(rawPath);
 
-  if (perm.deniedPaths.some(dp => normalizedPath.startsWith(dp.replace(/\\/g, '/')))) {
-    return { allowed: false, reason: `Path ${path} is explicitly denied` };
+  // ── Denied paths check ──────────────────────────────────────────────────
+  const isDenied = perm.deniedPaths.some(dp => isPathUnder(absPath, resolveIncomingPath(dp)));
+  if (isDenied) {
+    return { verdict: 'DENY', reason: `Path ${rawPath} is explicitly denied` };
   }
 
-  // If '/' is in allowedPaths, consider everything explicitly allowed globally
+  // ── Allowed paths check ─────────────────────────────────────────────────
   const isGloballyAllowed = perm.allowedPaths.some(ap => ap === '/');
-  
-  if (!isGloballyAllowed && !perm.allowedPaths.some(ap => normalizedPath.startsWith(ap.replace(/\\/g, '/'))) && perm.allowedPaths.length > 0) {
-    return { allowed: false, reason: `Path ${path} is not in allowed paths` };
-  }
-
   if (perm.allowedPaths.length === 0) {
-    return { allowed: false, reason: 'No filesystem paths allowed for this server' };
+    return { verdict: 'DENY', reason: 'No filesystem paths allowed for this server' };
   }
-
-  if (toolName === 'read_file' || toolName === 'read_directory' || toolName === 'list_directory') {
-    if (!perm.pathRead) {
-      return { allowed: false, reason: 'Read permission not granted' };
+  if (!isGloballyAllowed) {
+    const inAllowed = perm.allowedPaths.some(ap => isPathUnder(absPath, resolveIncomingPath(ap)));
+    if (!inAllowed) {
+      return { verdict: 'DENY', reason: `Path ${rawPath} is not in allowed paths` };
     }
   }
 
-  if (toolName === 'write_file') {
-    if (!perm.pathWrite) {
-      return { allowed: false, reason: 'Write permission not granted' };
+  // ── Per-operation permission flags ──────────────────────────────────────
+  if ((toolName === 'read_file' || toolName === 'read_directory' || toolName === 'list_directory') && !perm.pathRead) {
+    return { verdict: 'DENY', reason: 'Read permission not granted' };
+  }
+  if (toolName === 'write_file' && !perm.pathWrite) {
+    return { verdict: 'DENY', reason: 'Write permission not granted' };
+  }
+  if ((toolName === 'create_file' || toolName === 'create_directory') && !perm.pathCreate) {
+    return { verdict: 'DENY', reason: 'Create permission not granted' };
+  }
+  if ((toolName === 'delete_file' || toolName === 'delete_directory') && !perm.pathDelete) {
+    return { verdict: 'DENY', reason: 'Delete permission not granted' };
+  }
+
+  // ── Trust Policy: ALLOW_SILENT check ────────────────────────────────────
+  // Destructive tools can NEVER be silenced, regardless of trust policy
+  if (DESTRUCTIVE_TOOLS.has(toolName)) {
+    return { verdict: 'REQUIRE_APPROVAL' };
+  }
+
+  // Safe reads in a trusted path → execute without prompting.
+  // Trusted path '.' expands to process.cwd(), so LLM requests like '.'
+  // or './src' match automatically once the user adds '.' to trusted dirs.
+  if (
+    perm.autoApproveReads &&
+    SAFE_READ_TOOLS.has(toolName) &&
+    perm.trustedPaths.length > 0
+  ) {
+    const isTrusted = perm.trustedPaths.some(tp => {
+      const absTrusted = resolveIncomingPath(tp); // resolves '.' → process.cwd()
+      return isPathUnder(absPath, absTrusted);
+    });
+    if (isTrusted) {
+      return { verdict: 'ALLOW_SILENT' };
     }
   }
 
-  if (toolName === 'create_file' || toolName === 'create_directory') {
-    if (!perm.pathCreate) {
-      return { allowed: false, reason: 'Create permission not granted' };
-    }
-  }
-
-  if (toolName === 'delete_file' || toolName === 'delete_directory') {
-    if (!perm.pathDelete) {
-      return { allowed: false, reason: 'Delete permission not granted' };
-    }
-  }
-
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateBashPermission(perm: ServerPermission, input: Record<string, unknown>): PermissionResult {
   if (!perm.bashAllowed) {
-    return { allowed: false, reason: 'Bash execution is disabled for this server' };
+    return { verdict: 'DENY', reason: 'Bash execution is disabled for this server' };
   }
 
   const command = (input.command as string) || (input.cmd as string);
   if (!command) {
-    return { allowed: false, reason: 'No command provided' };
+    return { verdict: 'DENY', reason: 'No command provided' };
   }
 
   if (perm.bashAllowedCommands.length > 0) {
     const matches = perm.bashAllowedCommands.some(pattern => matchesGlob(command, pattern));
     if (!matches) {
-      return { allowed: false, reason: `Command "${command}" does not match allowed patterns` };
+      return { verdict: 'DENY', reason: `Command "${command}" does not match allowed patterns` };
     }
   }
 
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateWebfetchPermission(perm: ServerPermission, input: Record<string, unknown>): PermissionResult {
   if (!perm.webfetchAllowed) {
-    return { allowed: false, reason: 'Web fetch is disabled for this server' };
+    return { verdict: 'DENY', reason: 'Web fetch is disabled for this server' };
   }
 
   const url = (input.url as string) || (input.uri as string);
   if (!url) {
-    return { allowed: false, reason: 'No URL provided' };
+    return { verdict: 'DENY', reason: 'No URL provided' };
   }
 
   if (perm.webfetchAllowedDomains.length > 0) {
@@ -187,28 +253,28 @@ function evaluateWebfetchPermission(perm: ServerPermission, input: Record<string
         urlObj.hostname === domain || urlObj.hostname.endsWith(`.${domain}`)
       );
       if (!matches) {
-        return { allowed: false, reason: `Domain ${urlObj.hostname} is not in allowed domains` };
+        return { verdict: 'DENY', reason: `Domain ${urlObj.hostname} is not in allowed domains` };
       }
     } catch {
-      return { allowed: false, reason: 'Invalid URL format' };
+      return { verdict: 'DENY', reason: 'Invalid URL format' };
     }
   }
 
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateSubprocessPermission(perm: ServerPermission): PermissionResult {
   if (!perm.subprocessAllowed) {
-    return { allowed: false, reason: 'Subprocess spawning is disabled for this server' };
+    return { verdict: 'DENY', reason: 'Subprocess spawning is disabled for this server' };
   }
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateNetworkPermission(perm: ServerPermission): PermissionResult {
   if (!perm.networkAllowed) {
-    return { allowed: false, reason: 'Network access is disabled for this server' };
+    return { verdict: 'DENY', reason: 'Network access is disabled for this server' };
   }
-  return { allowed: true };
+  return { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function matchesGlob(str: string, pattern: string): boolean {

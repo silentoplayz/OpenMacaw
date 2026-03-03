@@ -438,7 +438,14 @@ export default function Servers() {
                   }`}
                 >
                   <td className="px-4 py-3 font-medium text-gray-200">
-                    {server.name}
+                    <div className="flex items-center gap-2">
+                      {server.name}
+                      {(server as any).autoApproveReads && (
+                        <span title="Auto-Approve Reads enabled" className="text-[9px] font-mono text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          ⚡ AUTO
+                        </span>
+                      )}
+                    </div>
                     {editingServerId === server.id && (
                       <span className="ml-2 text-[10px] font-mono text-cyan-500 uppercase tracking-wider">editing</span>
                     )}

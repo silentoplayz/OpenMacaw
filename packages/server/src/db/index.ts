@@ -268,6 +268,14 @@ export function initDatabase(): void {
     // Column already exists, safe to ignore
   }
 
+  // ── Trust Policy columns (Phase 46) ──────────────────────────────────────
+  try {
+    sqlite.exec("ALTER TABLE permissions ADD COLUMN auto_approve_reads INTEGER DEFAULT 0");
+  } catch (e) { /* column already exists */ }
+  try {
+    sqlite.exec("ALTER TABLE permissions ADD COLUMN trusted_paths TEXT DEFAULT '[]'");
+  } catch (e) { /* column already exists */ }
+
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });
 
   // Migrate from legacy JSON store on first run

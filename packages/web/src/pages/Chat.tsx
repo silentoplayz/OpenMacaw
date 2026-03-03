@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, Trash2, Loader2, ShieldCheck, Search, Terminal, Shield, Check, Copy, AlertTriangle } from 'lucide-react';
+import { Trash2, Loader2, ShieldCheck, Shield, Check, Copy, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch, getWsUrl, type AgentEvent } from '../api';
+import { ChatInput } from '../components/ChatInput';
 
 // ── Copy Button for Code Blocks ───────────────────────────────────────────────
 function CodeBlock({ children, className, ...props }: any) {
@@ -399,6 +400,7 @@ function hydrateMessage(msg: Message): Message {
 
 export default function Chat() {
   const { id: sessionId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId || null);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -406,6 +408,7 @@ export default function Chat() {
   const [mockMessages, setMockMessages] = useState<Message[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [showGuardianOverlay, setShowGuardianOverlay] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -768,7 +771,7 @@ export default function Chat() {
 
   return (
     <div className="flex h-full">
-      <aside className="w-56 border-r border-gray-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/50 flex flex-col shrink-0 hidden md:flex">
+      <aside className={`w-56 border-r border-gray-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/50 flex flex-col shrink-0 transition-all duration-200 ${sidebarVisible ? 'hidden md:flex' : 'hidden'}`}>
         <div className="h-14 px-3 border-b border-gray-200 dark:border-white/10 flex items-center">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Conversations</span>
         </div>
@@ -1022,44 +1025,20 @@ export default function Chat() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-3 border-t border-white/5 bg-black">
-          <div className="flex gap-2 max-w-4xl mx-auto items-end">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                // Auto-resize
-                const ta = textareaRef.current;
-                if (ta) {
-                  ta.style.height = 'auto';
-                  ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-                }
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="flex-1 px-3 py-2.5 bg-zinc-950 border border-white/10 text-gray-200 rounded-md resize-none focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50 shadow-sm text-sm overflow-y-auto"
-              style={{ maxHeight: '200px' }}
-              rows={1}
-              disabled={isStreaming}
-            />
-            <button
-              onClick={() => {
-                sendMessage();
-                // Reset textarea height
-                if (textareaRef.current) textareaRef.current.style.height = 'auto';
-              }}
-              disabled={!input.trim() || isStreaming}
-              className="px-4 py-2.5 bg-white text-black rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors flex items-center justify-center self-end"
-            >
-              {isStreaming ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-        </div>
+        <ChatInput
+          value={input}
+          onChange={(v) => setInput(typeof v === 'function' ? v(input) : v)}
+          onSend={() => {
+            sendMessage();
+          }}
+          isStreaming={isStreaming}
+          sessionId={currentSessionId}
+          onClear={() => {
+            queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
+          }}
+          onSidebarToggle={() => setSidebarVisible(v => !v)}
+          onNavigate={(path) => navigate(path)}
+        />
       </div>
     </div>
   );
