@@ -169,7 +169,19 @@ export class DiscordPipeline {
   ): Promise<void> {
     console.log(`[Discord Pipeline: ${pipelineName}] Message from ${message.author.tag}: ${content.substring(0, 80)}`);
 
-    // ── Task 3: Thinking status ───────────────────────────────────────────────
+    // ── Typing indicator ──────────────────────────────────────────────────────
+    // Discord's typing indicator expires after 10 s, so we fire it immediately
+    // and then refresh every 8 s for the full duration of the agent run.
+    // PartialGroupDMChannel lacks sendTyping, so guard before calling.
+    const sendTyping = () => {
+      if ('sendTyping' in message.channel) {
+        (message.channel as any).sendTyping().catch(() => undefined);
+      }
+    };
+    sendTyping();
+    const typingInterval = setInterval(sendTyping, 8_000);
+
+    // ── Thinking presence ─────────────────────────────────────────────────────
     this.client?.user?.setPresence({
       activities: [{ name: 'Thinking…', type: ActivityType.Watching }],
       status: 'online',
@@ -202,7 +214,9 @@ export class DiscordPipeline {
       );
       return;
     } finally {
-      // ── Task 3: Restore idle presence when done (success or error) ───────────
+      // Stop the typing indicator and restore idle presence once the agent
+      // finishes (whether it succeeded, errored, or was aborted).
+      clearInterval(typingInterval);
       this.client?.user?.setPresence({ activities: [], status: 'idle' });
     }
 
