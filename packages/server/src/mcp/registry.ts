@@ -67,10 +67,15 @@ export async function startServer(id: string): Promise<MCPServerInfo> {
 
   try {
     if (serverData.transport === 'stdio' && serverData.command) {
-      const envVars = serverData.env_vars ? JSON.parse(serverData.env_vars) : undefined;
+      // db.select() converts snake_case keys to camelCase — use envVars not env_vars
+      const envVars = serverData.envVars ? JSON.parse(serverData.envVars as string) : undefined;
+      const args = serverData.args ? JSON.parse(serverData.args as string) : undefined;
+
+      console.log(`[MCP] Spawning '${server.info.name}' | cmd: ${serverData.command} | args:`, args, '| env:', envVars);
+
       await server.client.connect({
-        command: serverData.command,
-        args: serverData.args ? JSON.parse(serverData.args) : undefined,
+        command: serverData.command as string,
+        args,
         envVars,
       });
     } else {

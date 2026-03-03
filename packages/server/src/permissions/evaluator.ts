@@ -13,18 +13,37 @@ export interface PermissionResult {
 }
 
 const toolNameToType: Record<string, string> = {
+  // Filesystem tools
   read_file: 'filesystem',
   write_file: 'filesystem',
   create_file: 'filesystem',
   delete_file: 'filesystem',
   list_directory: 'filesystem',
   read_directory: 'filesystem',
+  // Bash / shell tools
   bash: 'bash',
   execute_command: 'bash',
   run_command: 'bash',
+  // Shell MCP server (@modelcontextprotocol/server-shell)
+  shell_run: 'bash',
+  shell_exec: 'bash',
+  run_shell: 'bash',
+  run_script: 'bash',
+  exec_command: 'bash',
+  // Web / network tools
   webfetch: 'webfetch',
   fetch_url: 'webfetch',
   open_url: 'webfetch',
+  // Web Search MCP server (@modelcontextprotocol/server-search)
+  search: 'webfetch',
+  web_search: 'webfetch',
+  search_web: 'webfetch',
+  google_search: 'webfetch',
+  serpapi_search: 'webfetch',
+  // SearXNG MCP server (mcp-server-searxng)
+  searxng_search: 'webfetch',
+  searxng: 'webfetch',
+  // Subprocess / network meta
   subprocess: 'subprocess',
   spawn: 'subprocess',
   network: 'network',

@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { getDb, schema } from '../db/index.js';
-import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools, pauseAllServers } from '../mcp/index.js';
+import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools, pauseAllServers, getMCPServer } from '../mcp/index.js';
 import { createDefaultPermission } from '../permissions/index.js';
 import { activeStreams } from '../agent/runtime.js';
 
@@ -50,13 +50,13 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
       transport: s.transport,
       command: s.command,
       args: s.args,
-      envVars: s.env_vars,
+      envVars: s.envVars,           // db.select() converts env_vars → envVars
       url: s.url,
       enabled: Boolean(s.enabled),
-      status: runningMap.get(s.id)?.status || s.status,
-      toolCount: runningMap.get(s.id)?.toolCount || 0,
-      createdAt: s.created_at,
-      updatedAt: s.updated_at,
+      status: runningMap.get(s.id as string)?.status || s.status,
+      toolCount: runningMap.get(s.id as string)?.toolCount || 0,
+      createdAt: s.createdAt,       // db.select() converts created_at → createdAt
+      updatedAt: s.updatedAt,       // db.select() converts updated_at → updatedAt
     }));
 
     return reply.send(result);
@@ -135,17 +135,44 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDb();
 
     const updates: Record<string, unknown> = { updated_at: Date.now() };
-    if (body.name) updates.name = body.name;
-    if (body.command) updates.command = body.command;
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.command !== undefined) updates.command = body.command;
     if (body.args !== undefined) updates.args = normalizeArgs(body.args);
     if (body.envVars !== undefined) updates.env_vars = normalizeEnvVars(body.envVars);
-    if (body.url) updates.url = body.url;
-    if (body.transport) updates.transport = body.transport;
+    if (body.url !== undefined) updates.url = body.url;
+    if (body.transport !== undefined) updates.transport = body.transport;
     if (body.enabled !== undefined) updates.enabled = body.enabled ? 1 : 0;
 
     db.update(schema.servers as any).set(updates).where((getCol: (col: string) => unknown) => getCol('id') === id);
 
-    return reply.send({ success: true });
+    // ── Auto-restart: stop the old process and re-register with new config ──
+    // This makes the new config available immediately on next Start click.
+    // We don't auto-start to avoid starting a server with potentially broken config.
+    let wasRunning = false;
+    try {
+      const existing = getMCPServer(id);
+      wasRunning = existing?.client.isConnected() ?? false;
+      if (wasRunning || existing) {
+        await stopServer(id).catch(() => {});
+      }
+    } catch { /* server may not have been registered yet */ }
+
+    // Re-read the freshly persisted row and re-register with updated values
+    const freshRows = db.select(schema.servers as any).where((getCol: (col: string) => any) => getCol('id') === id).all() as any[];
+    if (freshRows.length > 0) {
+      const s = freshRows[0];
+      await registerServer({
+        id,
+        name: s.name,
+        transport: s.transport,
+        command: s.command,
+        args: s.args ? JSON.parse(s.args) : undefined,
+        envVars: s.env_vars ? JSON.parse(s.env_vars) : undefined,
+        url: s.url,
+      });
+    }
+
+    return reply.send({ success: true, wasRunning });
   });
 
   fastify.delete('/api/servers/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
