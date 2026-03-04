@@ -29,7 +29,6 @@ interface ChatInputProps {
   isStreaming: boolean;
   sessionId: string | null;
   onClear: () => void;
-  onSidebarToggle: () => void;
   onNavigate: (path: string) => void;
 }
 
@@ -43,7 +42,6 @@ export function ChatInput({
   isStreaming,
   sessionId,
   onClear,
-  onSidebarToggle,
   onNavigate,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -109,17 +107,13 @@ export function ChatInput({
         e.preventDefault();
         textareaRef.current?.focus();
       }
-      if (isMod && e.key === '\\') {
-        e.preventDefault();
-        onSidebarToggle();
-      }
       if (e.key === 'Escape' && agenticOpen) {
         setAgenticOpen(false);
       }
     };
     window.addEventListener('keydown', handle);
     return () => window.removeEventListener('keydown', handle);
-  }, [onSidebarToggle, agenticOpen]);
+  }, [agenticOpen]);
 
   // ── Slash-command menu logic ──────────────────────────────────────────────
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -446,7 +440,6 @@ export function ChatInput({
       <div className="mt-1.5 flex items-center gap-3 max-w-4xl mx-auto px-1">
         <span className="text-[9px] font-mono text-gray-600">
           <kbd className="px-1 py-0.5 bg-white/5 rounded text-[8px]">⌘K</kbd> focus ·{' '}
-          <kbd className="px-1 py-0.5 bg-white/5 rounded text-[8px]">⌘\</kbd> sidebar ·{' '}
           <kbd className="px-1 py-0.5 bg-white/5 rounded text-[8px]">↑</kbd> recall ·{' '}
           <kbd className="px-1 py-0.5 bg-white/5 rounded text-[8px]">/</kbd> commands ·{' '}
           <kbd className="px-1 py-0.5 bg-white/5 rounded text-[8px]">⚡</kbd> agentic

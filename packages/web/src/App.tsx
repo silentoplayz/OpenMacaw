@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
-  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -252,32 +252,12 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-// Returns true when the device is a touch/mobile device (coarse pointer).
-// Used to decide initial sidebar state and auto-close behaviour.
-function isMobileDevice(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia('(pointer: coarse)').matches;
-}
-
 function App() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
-  // Start closed on touch/mobile devices, open on desktop/mouse devices.
-  const [isSidebarOpen, setIsSidebarOpen] = useState(() => !isMobileDevice());
-  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
-
-  // Keep isMobile in sync when the pointer capability changes (e.g. tablet
-  // plugged into a mouse) without a page reload.
-  useEffect(() => {
-    const mq = window.matchMedia('(pointer: coarse)');
-    const handler = (e: MediaQueryListEvent) => {
-      setIsMobile(e.matches);
-      if (e.matches) setIsSidebarOpen(false);
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
+  // Mobile overlay nav — starts closed; desktop sidebar is always visible.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [executionLogs, setExecutionLogs] = useState<{ id: string, time: string, message: string, type: 'info' | 'success' | 'error' }[]>([]);
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
@@ -404,223 +384,197 @@ function App() {
     }
   });
 
+  const { data: chatSessions } = useQuery<{ id: string; title: string }[]>({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const res = await apiFetch('/api/sessions');
+      return res.json();
+    },
+    refetchInterval: 10_000,
+  });
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+  });
+
+  // Extract the active session id from the URL (e.g. /chat/SESSION_ID).
+  const activeChatId = location.pathname.match(/^\/chat\/(.+)/)?.[1] ?? null;
+  const chatActive = location.pathname.startsWith('/chat');
+
   return (
     <>
       <AgentPanel isOpen={isAgentPanelOpen} onClose={() => setIsAgentPanelOpen(false)} isCollapsed={false} />
 
-      {/* ── Mobile top bar — only on touch/mobile devices ── */}
-      {isMobile && (
-        <div className="fixed top-0 left-0 right-0 h-12 bg-zinc-950 border-b border-white/5 flex items-center px-3 gap-3 z-30">
-          <button
-            onClick={() => setIsSidebarOpen(v => !v)}
-            className="p-1.5 rounded-md text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
-            aria-label="Toggle menu"
-          >
-            {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-          <Shield className="w-4 h-4 text-cyan-500 shrink-0" />
-          <span className="font-bold text-white text-sm">OpenMacaw</span>
-        </div>
-      )}
+      {/* ── Mobile top bar (hamburger + logo) — hidden on lg+ ── */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 h-12 bg-zinc-950 border-b border-white/5 flex items-center px-3 gap-3 z-30">
+        <button
+          onClick={() => setMobileNavOpen(v => !v)}
+          className="p-1.5 rounded-md text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
+          aria-label="Toggle menu"
+        >
+          {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+        <Shield className="w-4 h-4 text-cyan-500 shrink-0" />
+        <span className="font-bold text-white text-sm">OpenMacaw</span>
+      </div>
 
-      {/* ── Backdrop — only on mobile when sidebar is open ── */}
-      {isMobile && isSidebarOpen && (
+      {/* ── Mobile backdrop ── */}
+      {mobileNavOpen && (
         <div
-          className="fixed inset-0 bg-black/60 z-30 backdrop-blur-sm"
-          onClick={() => setIsSidebarOpen(false)}
+          className="lg:hidden fixed inset-0 bg-black/60 z-30 backdrop-blur-sm"
+          onClick={() => setMobileNavOpen(false)}
         />
       )}
 
       <div className="flex h-screen bg-black text-gray-200 overflow-hidden font-sans">
 
-        {/* ── Left Pane (Nav & Servers) ──
-              Mobile  : fixed overlay, slides in/out, auto-closes on nav.
-              Desktop : flex column in normal flow; collapse button toggles width.   */}
+        {/* ── Left sidebar — always visible on desktop, overlay on mobile ── */}
         <aside className={[
-          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40',
-          'transition-all duration-200 ease-in-out',
-          // Mobile: fixed full-height overlay, slides in/out
-          isMobile
-            ? `fixed inset-y-0 left-0 w-64 shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
-            // Desktop: in flex flow; open = full width, closed = thin strip (w-9) for the expand button
-            : `relative shadow-none overflow-hidden ${isSidebarOpen ? 'w-56' : 'w-9'}`,
+          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40 w-56',
+          'transition-transform duration-200 ease-in-out',
+          // Mobile: fixed overlay, slides in/out
+          'fixed inset-y-0 left-0 shadow-2xl',
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
+          // Desktop: in flex flow, always visible
+          'lg:relative lg:translate-x-0 lg:shadow-none',
         ].join(' ')}>
 
-          {/* Sidebar header: logo + collapse/expand button */}
-          <div className="h-12 flex items-center border-b border-white/5 gap-2 shrink-0 px-2">
-            {/* Expand button — visible only in the collapsed strip on desktop */}
-            {!isMobile && !isSidebarOpen && (
-              <button
-                onClick={() => setIsSidebarOpen(true)}
-                className="p-1 rounded-md text-gray-500 hover:bg-white/10 hover:text-white transition-colors shrink-0 mx-auto"
-                title="Expand menu"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
-            {/* Logo + collapse button — visible when sidebar is open */}
-            {isSidebarOpen && (
-              <>
-                <Shield className="w-4 h-4 text-cyan-500 shrink-0 ml-2" />
-                <span className="font-bold text-white text-sm flex-1 whitespace-nowrap">OpenMacaw</span>
-                <button
-                  onClick={() => setIsSidebarOpen(false)}
-                  className="p-1 rounded-md text-gray-500 hover:bg-white/10 hover:text-white transition-colors shrink-0"
-                  title="Collapse menu"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-              </>
-            )}
+          {/* Logo */}
+          <div className="h-12 flex items-center px-4 border-b border-white/5 gap-2 shrink-0">
+            <Shield className="w-4 h-4 text-cyan-500" />
+            <span className="font-bold text-white text-sm">OpenMacaw</span>
           </div>
 
-          {/* ── Collapsed icon strip (desktop only) ── */}
-          {!isMobile && !isSidebarOpen && (
-            <div className="flex flex-col flex-1 items-center py-1 gap-0.5 overflow-y-auto">
-              {/* Nav icons */}
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname.startsWith(item.path);
-                return (
+          {/* Nav items — Chat item expands to show sessions when active */}
+          <nav className="p-2 space-y-0.5">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname.startsWith(item.path);
+              const isChat = item.path === '/chat';
+              return (
+                <div key={item.path}>
                   <Link
-                    key={item.path}
                     to={item.path}
                     title={item.label}
-                    className={`p-2 rounded-md transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+                    onClick={() => setMobileNavOpen(false)}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="font-medium">{item.label}</span>
                   </Link>
-                );
-              })}
 
-              <div className="flex-1" />
-
-              {/* Halt All — stop sign */}
-              <button
-                onClick={() => haltMutation.mutate()}
-                disabled={haltMutation.isPending || !isGlobalStreaming}
-                title={haltMutation.isPending ? 'Halting…' : 'Halt All'}
-                className={`p-2 rounded-md transition-all ${
-                  isGlobalStreaming
-                    ? 'text-rose-500 hover:bg-rose-950/40 animate-[pulse_2s_ease-in-out_infinite]'
-                    : 'text-gray-600 opacity-40 cursor-not-allowed'
-                }`}
-              >
-                <AlertOctagon className="w-4 h-4" />
-              </button>
-
-              {/* Configure Agent */}
-              <button
-                onClick={() => setIsAgentPanelOpen(true)}
-                title="Configure Agent"
-                className="p-2 rounded-md text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors"
-              >
-                <Bot className="w-4 h-4" />
-              </button>
-
-              {/* New Chat */}
-              {location.pathname.startsWith('/chat') && (
-                <button
-                  onClick={handleNewChat}
-                  title="New Chat"
-                  className="p-2 rounded-md text-cyan-400 hover:bg-cyan-950/30 hover:text-cyan-300 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* ── Full sidebar content (open state, or always on mobile) ── */}
-          {(isSidebarOpen || isMobile) && (
-            <>
-              <nav className="p-2 space-y-0.5">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = location.pathname.startsWith(item.path);
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      title={item.label}
-                      onClick={() => { if (isMobile) setIsSidebarOpen(false); }}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
-                    >
-                      <Icon className="w-4 h-4 shrink-0" />
-                      <span className="font-medium">{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </nav>
-
-              <div className="mx-2 my-1 border-t border-white/5" />
-
-              <div className="flex-1 overflow-y-auto p-2">
-                <div className="px-1 mb-2">
-                  <span className="text-[10px] uppercase font-mono tracking-wider text-gray-500 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3 h-3 text-cyan-500" /> Active Servers
-                  </span>
-                </div>
-                <div className="space-y-0.5">
-                  {servers?.filter(s => s.status === 'running' || s.status === 'paused').map((server) => (
-                    <div
-                      key={server.id}
-                      onClick={() => { setSelectedServerId(server.id); if (isMobile) setIsSidebarOpen(false); }}
-                      className="flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-white/10 transition-colors group"
-                    >
-                      <span className="text-xs font-mono text-gray-400 group-hover:text-gray-300 truncate">
-                        <span className="hidden group-hover:inline absolute -ml-4 text-cyan-500"><Settings2 className="w-3 h-3 inline pb-[1px]" /></span>
-                        {server.name}
-                      </span>
-                      <div title={server.status} className={`w-1.5 h-1.5 rounded-full shrink-0 ${server.status === 'running' ? 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.8)]' : 'bg-yellow-500'}`} />
+                  {/* Chat sessions submenu — shown when Chat is the active section */}
+                  {isChat && chatActive && chatSessions && chatSessions.length > 0 && (
+                    <div className="mt-0.5 max-h-44 overflow-y-auto space-y-0.5">
+                      {chatSessions.map(session => (
+                        <div
+                          key={session.id}
+                          className={`group flex items-center gap-1 pl-7 pr-1 py-1 rounded-md text-xs transition-colors ${
+                            activeChatId === session.id
+                              ? 'text-cyan-400 bg-cyan-500/10'
+                              : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                          }`}
+                        >
+                          <Link
+                            to={`/chat/${session.id}`}
+                            onClick={() => setMobileNavOpen(false)}
+                            className="flex-1 truncate min-w-0"
+                            title={session.title}
+                          >
+                            {session.title}
+                          </Link>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (confirm('Delete this conversation?')) {
+                                deleteSessionMutation.mutate(session.id);
+                              }
+                            }}
+                            title="Delete conversation"
+                            className="shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:text-rose-400 transition-all"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  {(!servers || servers.filter(s => s.status === 'running' || s.status === 'paused').length === 0) && (
-                    <div className="text-[10px] text-gray-500 italic px-1">No active servers</div>
                   )}
                 </div>
-              </div>
+              );
+            })}
+          </nav>
 
-              <div className="px-2 pb-2">
-                <button
-                  onClick={() => haltMutation.mutate()}
-                  disabled={haltMutation.isPending || !isGlobalStreaming}
-                  className={`w-full flex items-center justify-center gap-2 px-3 py-2 border rounded text-xs font-bold uppercase tracking-wider transition-all
-                    ${isGlobalStreaming
-                      ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]'
-                      : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
-                    }`}
-                >
-                  <AlertOctagon className="w-4 h-4" />
-                  {haltMutation.isPending ? 'Halting...' : 'Halt All'}
-                </button>
-              </div>
+          <div className="mx-2 my-1 border-t border-white/5" />
 
-              <div className="p-2 border-t border-white/5 space-y-1">
-                <button
-                  onClick={() => { setIsAgentPanelOpen(true); if (isMobile) setIsSidebarOpen(false); }}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors"
+          <div className="flex-1 overflow-y-auto p-2">
+            <div className="px-1 mb-2">
+              <span className="text-[10px] uppercase font-mono tracking-wider text-gray-500 flex items-center gap-1.5">
+                <ShieldCheck className="w-3 h-3 text-cyan-500" /> Active Servers
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {servers?.filter(s => s.status === 'running' || s.status === 'paused').map((server) => (
+                <div
+                  key={server.id}
+                  onClick={() => { setSelectedServerId(server.id); setMobileNavOpen(false); }}
+                  className="flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-white/10 transition-colors group"
                 >
-                  <Bot className="w-4 h-4 shrink-0" />
-                  <span className="font-medium text-left">Configure Agent</span>
-                </button>
-                {location.pathname.startsWith('/chat') && (
-                  <button
-                    onClick={() => { handleNewChat(); if (isMobile) setIsSidebarOpen(false); }}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-cyan-400 hover:bg-cyan-950/30 hover:text-cyan-300 transition-colors"
-                  >
-                    <Plus className="w-4 h-4 shrink-0" />
-                    <span className="font-medium text-left">New Chat</span>
-                  </button>
-                )}
-              </div>
-            </>
-          )}
+                  <span className="text-xs font-mono text-gray-400 group-hover:text-gray-300 truncate">
+                    <span className="hidden group-hover:inline absolute -ml-4 text-cyan-500"><Settings2 className="w-3 h-3 inline pb-[1px]" /></span>
+                    {server.name}
+                  </span>
+                  <div title={server.status} className={`w-1.5 h-1.5 rounded-full shrink-0 ${server.status === 'running' ? 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.8)]' : 'bg-yellow-500'}`} />
+                </div>
+              ))}
+              {(!servers || servers.filter(s => s.status === 'running' || s.status === 'paused').length === 0) && (
+                <div className="text-[10px] text-gray-500 italic px-1">No active servers</div>
+              )}
+            </div>
+          </div>
+
+          <div className="px-2 pb-2">
+            <button
+              onClick={() => haltMutation.mutate()}
+              disabled={haltMutation.isPending || !isGlobalStreaming}
+              className={`w-full flex items-center justify-center gap-2 px-3 py-2 border rounded text-xs font-bold uppercase tracking-wider transition-all
+                ${isGlobalStreaming
+                  ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]'
+                  : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
+                }`}
+            >
+              <AlertOctagon className="w-4 h-4" />
+              {haltMutation.isPending ? 'Halting...' : 'Halt All'}
+            </button>
+          </div>
+
+          <div className="p-2 border-t border-white/5 space-y-1">
+            <button
+              onClick={() => { setIsAgentPanelOpen(true); setMobileNavOpen(false); }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors"
+            >
+              <Bot className="w-4 h-4 shrink-0" />
+              <span className="font-medium text-left">Configure Agent</span>
+            </button>
+            {chatActive && (
+              <button
+                onClick={() => { handleNewChat(); setMobileNavOpen(false); }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-cyan-400 hover:bg-cyan-950/30 hover:text-cyan-300 transition-colors"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                <span className="font-medium text-left">New Chat</span>
+              </button>
+            )}
+          </div>
         </aside>
 
-        {/* ── Middle Pane (Wide: Main Interaction) ── */}
-        {/* pt-12 on mobile accounts for the fixed top bar */}
-        <main className={`flex-1 flex flex-col min-w-0 bg-black z-0 relative ${isMobile ? 'pt-12' : 'pt-0'}`}>
+        {/* ── Middle Pane ── */}
+        <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 lg:pt-0">
           <Outlet />
         </main>
 

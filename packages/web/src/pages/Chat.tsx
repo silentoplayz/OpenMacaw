@@ -1015,7 +1015,7 @@ type ChatState = {
   chatError: { code: string; message: string } | null;
   selectedServerId: string | null;
   showGuardianOverlay: boolean;
-  sidebarVisible: boolean;
+
   /** Set while an MCP tool call is in-flight; null when idle. */
   activeToolCall: { tool: string; server: string } | null;
   /** Human-readable label for the current pre-LLM pipeline stage (null when idle). */
@@ -1032,7 +1032,7 @@ type ChatAction =
   | { type: 'RESET_STREAM' }
   | { type: 'SET_SERVER'; id: string | null }
   | { type: 'TOGGLE_GUARDIAN' }
-  | { type: 'TOGGLE_SIDEBAR' }
+
   | { type: 'CLEAR_ERROR' }
   | { type: 'SET_TOOL_CALL'; tool: string; server: string }
   | { type: 'CLEAR_TOOL_CALL' }
@@ -1046,7 +1046,7 @@ const initialChatState: ChatState = {
   chatError: null,
   selectedServerId: null,
   showGuardianOverlay: false,
-  sidebarVisible: true,
+
   activeToolCall: null,
   activeStage: null,
   streamingToolCalls: [],
@@ -1069,8 +1069,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, selectedServerId: action.id };
     case 'TOGGLE_GUARDIAN':
       return { ...state, showGuardianOverlay: !state.showGuardianOverlay };
-    case 'TOGGLE_SIDEBAR':
-      return { ...state, sidebarVisible: !state.sidebarVisible };
+
     case 'CLEAR_ERROR':
       return { ...state, chatError: null };
     case 'SET_TOOL_CALL':
@@ -1109,7 +1108,7 @@ export default function Chat() {
   const streamingStartedRef = useRef(false);
   const queryClient = useQueryClient();
 
-  const { isStreaming, streamingContent, chatError, selectedServerId, showGuardianOverlay, sidebarVisible, activeToolCall, activeStage, streamingToolCalls } = state;
+  const { isStreaming, streamingContent, chatError, selectedServerId, showGuardianOverlay, activeToolCall, activeStage, streamingToolCalls } = state;
 
 
   const { data: sessions, isLoading: sessionsLoading } = useQuery<Session[]>({
@@ -1656,41 +1655,6 @@ export default function Chat() {
 
   return (
     <div className="flex h-full">
-      <aside className={`w-56 border-r border-gray-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/50 flex flex-col shrink-0 transition-all duration-200 ${sidebarVisible ? 'hidden md:flex' : 'hidden'}`}>
-        <div className="h-14 px-3 border-b border-gray-200 dark:border-white/10 flex items-center">
-          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Conversations</span>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          {sessionsLoading ? (
-            <div className="p-4 text-gray-500 dark:text-gray-400">Loading...</div>
-          ) : (
-            sessions?.map(session => (
-              <div
-                key={session.id}
-                className={`group flex items-center justify-between px-3 py-2 rounded-lg mb-1 cursor-pointer transition-colors ${currentSessionId === session.id
-                  ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
-                  }`}
-                onClick={() => setCurrentSessionId(session.id)}
-              >
-                <span className="truncate flex-1">{session.title}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm('Delete this conversation?')) {
-                      deleteSessionMutation.mutate(session.id);
-                    }
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
-                >
-                  <Trash2 className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
-
       <div className="flex-1 flex flex-col min-w-0 bg-black relative">
         {currentSessionId && (
           <div className="h-14 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-zinc-950 z-10 backdrop-blur-sm relative">
@@ -2096,7 +2060,6 @@ export default function Chat() {
           onClear={() => {
             queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
           }}
-          onSidebarToggle={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
           onNavigate={(path) => navigate(path)}
         />
       </div>
