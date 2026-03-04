@@ -27,6 +27,7 @@ import {
   modelCheckRoutes,
   agenticRoutes,
   authRoutes,
+  adminRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,7 +38,11 @@ async function buildApp() {
 
   const fastify = Fastify({ logger: false });
 
-  await fastify.register(cors, { origin: true, credentials: true });
+  await fastify.register(cors, { 
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:4000'], 
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+  });
   await fastify.register(fastifyWebsocket);
   await fastify.register(fastifyJwt, {
     secret: process.env.JWT_SECRET || 'super-secret-openmacaw-key-change-me'
@@ -73,6 +78,7 @@ async function buildApp() {
   await fastify.register(modelCheckRoutes);
   await fastify.register(agenticRoutes);
   await fastify.register(authRoutes);
+  await fastify.register(adminRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');

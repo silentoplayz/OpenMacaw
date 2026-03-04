@@ -10,8 +10,9 @@ import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
 import Pipelines from './pages/Pipelines';
 import Catalog from './pages/Catalog';
+import Admin from './pages/Admin';
 import Auth from './pages/Auth';
-import { AuthProvider, ProtectedRoute } from './contexts/AuthContext';
+import { AuthProvider, ProtectedRoute, AdminRoute } from './contexts/AuthContext';
 import './index.css';
 
 // ── Service Worker (PWA) ──────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="activity" element={<AuditLog />} />
             <Route path="settings" element={<Settings />} />
             <Route path="catalog" element={<Catalog />} />
+            <Route path="admin" element={<AdminRoute><Admin /></AdminRoute>} />
           </Route>
         </Routes>
       </AuthProvider>

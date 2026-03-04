@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "tsx watch packages/server/src/index.ts",
-    "dev:web": "vite packages/web",
+    "dev:web": "cd packages/web && vite",
     "build": "npm run build:server && npm run build:web",
     "build:server": "tsc -p packages/server/tsconfig.json",
     "build:web": "cd packages/web && npm run build",

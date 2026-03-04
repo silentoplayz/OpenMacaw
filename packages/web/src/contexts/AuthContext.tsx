@@ -63,3 +63,18 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   return <>{children}</>;
 }
+
+export function AdminRoute({ children }: { children: ReactNode }) {
+  const { token, user } = useAuth();
+  const location = useLocation();
+
+  if (!token) {
+    return <Navigate to="/auth" state={{ from: location }} replace />;
+  }
+
+  if (user?.role !== 'admin') {
+    return <Navigate to="/chat" replace />;
+  }
+
+  return <>{children}</>;
+}

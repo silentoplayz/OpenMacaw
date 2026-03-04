@@ -302,6 +302,11 @@ export function initDatabase(): void {
     sqlite.exec("ALTER TABLE permissions ADD COLUMN trusted_paths TEXT DEFAULT '[]'");
   } catch (e) { /* column already exists */ }
 
+  // ── Phase 64: Last Active tracking ──────────────────────────────────────
+  try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN last_active INTEGER");
+  } catch (e) { /* column already exists */ }
+
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });
 
   // Migrate from legacy JSON store on first run

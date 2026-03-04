@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
-  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -375,7 +375,6 @@ function App() {
     { path: '/catalog', label: 'Catalog', icon: BookMarked },
     { path: '/activity', label: 'Audit Log', icon: Activity },
     { path: '/pipelines', label: 'Pipelines', icon: Workflow },
-    { path: '/settings', label: 'Settings', icon: Settings },
   ];
 
   const handleNewChat = () => {
@@ -601,6 +600,25 @@ function App() {
                   <div className="px-3 py-2 border-b border-white/5">
                     <p className="text-xs font-medium text-white truncate">{user?.email}</p>
                   </div>
+                  <Link
+                    to="/settings"
+                    onClick={() => { setProfileOpen(false); setMobileNavOpen(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    Settings
+                  </Link>
+                  {user?.role === 'admin' && (
+                    <Link
+                      to="/admin"
+                      onClick={() => { setProfileOpen(false); setMobileNavOpen(false); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-400 hover:bg-amber-950/30 hover:text-amber-300 transition-colors"
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      Admin Console
+                    </Link>
+                  )}
+                  <div className="border-t border-white/5" />
                   <button
                     onClick={() => {
                       logout();

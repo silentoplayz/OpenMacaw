@@ -75,6 +75,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
+    // Update last_active timestamp
+    await db.update(schema.users).set({ lastActive: new Date() }).where(eq(schema.users.id, user.id));
+
     const token = (fastify as any).jwt.sign({ id: user.id, email: user.email, role: user.role });
     return { token, user: { id: user.id, name: user.name, email: user.email, role: user.role } };
   });
