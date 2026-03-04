@@ -17,7 +17,7 @@ interface Settings {
   DEFAULT_PROVIDER?: string;
   MAX_STEPS?: string;
   TEMPERATURE?: string;
-  SYSTEM_PROMPT?: string;
+  PERSONALITY?: string;
   // UI Preferences
   AUTO_SCROLL_CHAT?: string;
   SHOW_RAW_JSON_LOGS?: string;
@@ -495,16 +495,19 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* ── System Prompt ──────────────────────────────── */}
+        {/* ── Personality ──────────────────────────────────── */}
         <div className={`${cardClass} md:col-span-2`}>
-          <div className="flex items-center gap-2 mb-5">
+          <div className="flex items-center gap-2 mb-2">
             <Bot className="w-4 h-4 text-cyan-500" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">System Prompt</h2>
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Personality</h2>
           </div>
+          <p className="text-xs text-gray-500 mb-4 font-mono leading-relaxed">
+            Describe the agent's style, tone, or domain focus. This text is appended to the base system prompt — it does not replace the agent's core mission or security rules.
+          </p>
           <textarea
-            value={formData.SYSTEM_PROMPT || ''}
-            onChange={(e) => setFormData({ ...formData, SYSTEM_PROMPT: e.target.value })}
-            placeholder="You are a helpful AI assistant..."
+            value={formData.PERSONALITY || ''}
+            onChange={(e) => setFormData({ ...formData, PERSONALITY: e.target.value })}
+            placeholder="e.g. Respond concisely in bullet points. Focus on Python and DevOps tasks."
             rows={8}
             className={`${inputClass} resize-none`}
           />

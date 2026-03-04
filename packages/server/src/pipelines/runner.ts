@@ -135,7 +135,7 @@ export async function runAgentForPipelineAsync(
     {
       sessionId: resolvedSessionId,
       model: session.model || config.DEFAULT_MODEL,
-      systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+      personality: session.personality || config.PERSONALITY,
       mode: session.mode,
       maxSteps: config.MAX_STEPS,
       autoExecute: true,
@@ -193,7 +193,7 @@ export async function runAgentStepAsync(
     {
       sessionId: resolvedSessionId,
       model: session.model || config.DEFAULT_MODEL,
-      systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+      personality: session.personality || config.PERSONALITY,
       mode: session.mode,
       maxSteps: config.MAX_STEPS,
       // ← Proposal mode: tools are NOT auto-executed; the runtime emits
@@ -601,7 +601,7 @@ export async function runAgenticTaskAsync(
       {
         sessionId: resolvedSessionId,
         model: session!.model || config.DEFAULT_MODEL,
-        systemPrompt: session!.systemPrompt || config.SYSTEM_PROMPT,
+        personality: session!.personality || config.PERSONALITY,
         mode: session!.mode || 'build',
         maxSteps: config.MAX_STEPS,
         autoExecute: true,

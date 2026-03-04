@@ -15,7 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 interface AgentForm {
   AGENT_NAME: string;
   AGENT_DESCRIPTION: string;
-  SYSTEM_PROMPT: string;
+  PERSONALITY: string;
   DEFAULT_MODEL: string;
   MAX_STEPS: string;
   TEMPERATURE: string;
@@ -39,7 +39,7 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
   const [form, setForm] = useState<AgentForm>({
     AGENT_NAME: '',
     AGENT_DESCRIPTION: '',
-    SYSTEM_PROMPT: '',
+    PERSONALITY: '',
     DEFAULT_MODEL: '',
     MAX_STEPS: '50',
     TEMPERATURE: '1.0',
@@ -53,7 +53,7 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
       setForm({
         AGENT_NAME: data.AGENT_NAME || '',
         AGENT_DESCRIPTION: data.AGENT_DESCRIPTION || '',
-        SYSTEM_PROMPT: data.SYSTEM_PROMPT || '',
+        PERSONALITY: data.PERSONALITY || '',
         DEFAULT_MODEL: data.DEFAULT_MODEL || '',
         MAX_STEPS: data.MAX_STEPS || '50',
         TEMPERATURE: data.TEMPERATURE || '1.0',
@@ -151,14 +151,17 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
             <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-3">Personality</p>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-mono text-gray-400 mb-1">System Prompt</label>
+                <label className="block text-xs font-mono text-gray-400 mb-1">Personality</label>
                 <textarea
-                  value={form.SYSTEM_PROMPT}
-                  onChange={(e) => setForm({ ...form, SYSTEM_PROMPT: e.target.value })}
-                  placeholder="You are a helpful AI assistant..."
+                  value={form.PERSONALITY}
+                  onChange={(e) => setForm({ ...form, PERSONALITY: e.target.value })}
+                  placeholder="Describe the agent's personality and style..."
                   rows={5}
                   className="w-full px-3 py-1.5 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 resize-none font-mono"
                 />
+                <p className="mt-1 text-[10px] text-gray-600 font-mono leading-relaxed">
+                  Appended to the base system prompt — does not replace it.
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

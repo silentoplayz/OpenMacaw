@@ -85,7 +85,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
               {
                 sessionId,
                 model: model || session.model || config.DEFAULT_MODEL,
-                systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+                personality: session.personality || config.PERSONALITY,
                 mode: mode || session.mode,
                 maxSteps: config.MAX_STEPS,
                 signal: abortCtrl.signal,
@@ -164,7 +164,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         {
           sessionId,
           model: model || session.model || config.DEFAULT_MODEL,
-          systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+          personality: session.personality || config.PERSONALITY,
           mode: session.mode,
           maxSteps: config.MAX_STEPS,
         },

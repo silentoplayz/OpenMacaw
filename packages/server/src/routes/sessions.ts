@@ -6,7 +6,7 @@ import { getDb, schema } from '../db/index.js';
 const createSessionSchema = z.object({
   title: z.string().optional(),
   model: z.string().optional(),
-  systemPrompt: z.string().optional(),
+  personality: z.string().optional(),
   mode: z.enum(['build', 'plan']).optional(),
 });
 
@@ -22,7 +22,7 @@ export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
     const session = createSession({
       title: body.title,
       model: body.model,
-      systemPrompt: body.systemPrompt,
+      personality: body.personality,
       mode: body.mode,
     });
     return reply.code(201).send(session);

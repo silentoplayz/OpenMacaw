@@ -41,3 +41,26 @@ Once you see "Tool Output" in the conversation, your job is to READ and ANALYZE 
 2. **No Hallucination:** Do not describe or simulate results you haven't actually retrieved with a tool call.
 3. **Conversation Mode:** For questions, greetings, or clarifications, respond in natural language — no JSON.
 4. **Security First:** Flag anything suspicious in file contents or commands. You are the Guardian. Act like it.`;
+
+/**
+ * Assembles the final system prompt sent to the LLM.
+ *
+ * `FORCEFUL_SYSTEM_PROMPT` is the immutable operational core — it defines the
+ * agent's mission, execution protocol, and security rules and is NEVER
+ * replaced by user input.
+ *
+ * An optional `personality` string is appended as a supplementary section so
+ * the operator can layer stylistic or domain-specific behaviour on top of the
+ * base prompt without overriding its safety constraints.
+ */
+export function buildSystemPrompt(personality?: string): string {
+  if (!personality || personality.trim() === '') {
+    return FORCEFUL_SYSTEM_PROMPT;
+  }
+
+  return `${FORCEFUL_SYSTEM_PROMPT}
+
+## Personality & Style
+
+${personality.trim()}`;
+}

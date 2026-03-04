@@ -6,7 +6,8 @@ export interface SessionData {
   id: string;
   title: string;
   model: string;
-  systemPrompt?: string;
+  /** Operator-supplied personality/style text appended to the base system prompt. */
+  personality?: string;
   mode: 'build' | 'plan';
   createdAt: Date;
   updatedAt: Date;
@@ -15,7 +16,8 @@ export interface SessionData {
 export function createSession(data: {
   title?: string;
   model?: string;
-  systemPrompt?: string;
+  /** Personality override for this session. Appended to base system prompt, not replacing it. */
+  personality?: string;
   mode?: 'build' | 'plan';
 }): SessionData {
   const db = getDb();
@@ -23,23 +25,28 @@ export function createSession(data: {
   const id = nanoid();
   const config = getActiveSettings();
 
-  const session = {
+  // Store personality in the system_prompt DB column (reusing existing schema).
+  const dbSession = {
     id,
     title: data.title || 'New Conversation',
     model: data.model || config.DEFAULT_MODEL,
-    systemPrompt: data.systemPrompt || config.SYSTEM_PROMPT,
+    systemPrompt: data.personality ?? config.PERSONALITY,
     mode: data.mode || 'build',
     createdAt: now,
     updatedAt: now,
   };
 
-  db.insert(schema.sessions as any).values(session);
+  db.insert(schema.sessions as any).values(dbSession);
 
   return {
-    ...session,
+    id: dbSession.id,
+    title: dbSession.title,
+    model: dbSession.model,
+    personality: dbSession.systemPrompt || undefined,
+    mode: dbSession.mode,
     createdAt: new Date(now),
     updatedAt: new Date(now),
-  } as SessionData;
+  };
 }
 
 export function getSession(id: string): SessionData | null {
@@ -53,7 +60,7 @@ export function getSession(id: string): SessionData | null {
     id: session.id,
     title: session.title,
     model: session.model,
-    systemPrompt: session.systemPrompt || undefined,
+    personality: session.systemPrompt || undefined,
     mode: session.mode as 'build' | 'plan',
     createdAt: new Date(session.createdAt),
     updatedAt: new Date(session.updatedAt),
@@ -68,7 +75,7 @@ export function listSessions(): SessionData[] {
     id: session.id,
     title: session.title,
     model: session.model,
-    systemPrompt: session.systemPrompt || undefined,
+    personality: session.systemPrompt || undefined,
     mode: session.mode as 'build' | 'plan',
     createdAt: new Date(session.createdAt),
     updatedAt: new Date(session.updatedAt),
@@ -78,7 +85,8 @@ export function listSessions(): SessionData[] {
 export function updateSession(id: string, updates: Partial<{
   title: string;
   model: string;
-  systemPrompt: string;
+  /** Personality text to store for this session. Appended to base system prompt at runtime. */
+  personality: string;
   mode: 'build' | 'plan';
 }>): SessionData | null {
   const db = getDb();
@@ -86,7 +94,8 @@ export function updateSession(id: string, updates: Partial<{
 
   if (updates.title !== undefined) dbUpdates.title = updates.title;
   if (updates.model !== undefined) dbUpdates.model = updates.model;
-  if (updates.systemPrompt !== undefined) dbUpdates.systemPrompt = updates.systemPrompt;
+  // Map personality → systemPrompt column in the DB
+  if (updates.personality !== undefined) dbUpdates.systemPrompt = updates.personality;
   if (updates.mode !== undefined) dbUpdates.mode = updates.mode;
 
   db.update(schema.sessions as any).set(dbUpdates).where((getCol: (col: string) => any) => getCol('id') === id);

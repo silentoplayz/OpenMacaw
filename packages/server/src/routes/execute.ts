@@ -206,7 +206,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
             {
               sessionId: payload.sessionId,
               model: session.model || config.DEFAULT_MODEL,
-              systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+              personality: session.personality || config.PERSONALITY,
               mode: session.mode,
               maxSteps: config.MAX_STEPS,
             },
@@ -291,7 +291,7 @@ export async function executeRoutes(fastify: FastifyInstance): Promise<void> {
           {
             sessionId,
             model: session.model || config.DEFAULT_MODEL,
-            systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+            personality: session.personality || config.PERSONALITY,
             mode: session.mode,
             maxSteps: config.MAX_STEPS,
           },

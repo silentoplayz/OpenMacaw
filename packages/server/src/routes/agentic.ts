@@ -53,7 +53,11 @@ async function broadcastSummaryAsync(
     await provider.chat(
         model,
         [
-            { role: 'system', content: config.SYSTEM_PROMPT || 'You are a helpful assistant.' },
+            {
+                role: 'system',
+                content: 'You are a concise reporting assistant. Your only job is to write clear, plain-text summaries of completed agentic tasks. Never propose tool calls. Never output JSON. Never use markdown headers. Just write 2-3 sentences of plain prose.'
+                    + (config.PERSONALITY ? `\n\n${config.PERSONALITY}` : ''),
+            },
             { role: 'user', content: summaryPrompt },
         ],
         [], // no tools — guaranteed text-only response
@@ -329,6 +333,10 @@ Begin now.`;
             let currentStepIdx = startStepOffset - 2; // 0-based
             let checkpointFired = false;
             let abortedForCheckpoint = false;
+            // Track whether the current LLM turn had any tool calls.
+            // Turns with no tool calls are the final report turn — stream it to the client.
+            let currentTurnHasToolCall = false;
+            let currentTurnTextBuffer = '';
 
             const STEP_START_RE = /\[STEP_START:(\d+)\]/g;
             const STEP_DONE_RE  = /\[STEP_DONE:(\d+)\]/g;
@@ -378,8 +386,13 @@ Begin now.`;
             const handleEvent = (event: AgentEvent) => {
                 if (event.type === 'text_delta' && event.content) {
                     fullText += event.content;
+                    currentTurnTextBuffer += event.content;
                     scanTextMarkers();
                 } else if (event.type === 'tool_call_start') {
+                    // This turn has a tool call — it's a mid-run turn, not the final report.
+                    currentTurnHasToolCall = true;
+                    // Discard any text preamble before the tool call.
+                    currentTurnTextBuffer = '';
                     broadcastToSession(sessionId, {
                         type: 'agentic_step_progress', runId,
                         stepIndex: currentStepIdx, tool: event.tool, status: 'running',
@@ -388,7 +401,18 @@ Begin now.`;
                 } else if (event.type === 'tool_call_result') {
                     broadcastToSession(sessionId, event);
                 } else if (event.type === 'message_end') {
-                    // Suppress mid-run message_end to prevent unnecessary session re-fetches.
+                    if (!currentTurnHasToolCall && currentTurnTextBuffer.length > 0) {
+                        // This is the final report turn — stream the buffered text to the client.
+                        const chunks = currentTurnTextBuffer.match(/.{1,64}/gs) ?? [currentTurnTextBuffer];
+                        for (const chunk of chunks) {
+                            broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
+                        }
+                        // Forward message_end so the client triggers a session refetch.
+                        broadcastToSession(sessionId, event);
+                    }
+                    // Reset per-turn state.
+                    currentTurnHasToolCall = false;
+                    currentTurnTextBuffer = '';
                 } else {
                     broadcastToSession(sessionId, event);
                 }
@@ -399,7 +423,7 @@ Begin now.`;
                     {
                         sessionId,
                         model: session.model || config.DEFAULT_MODEL,
-                        systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+                        personality: session.personality || config.PERSONALITY,
                         mode: session.mode,
                         maxSteps: config.MAX_STEPS,
                         autoExecute: true,
@@ -452,9 +476,8 @@ Begin now.`;
                 updateAgenticRun(runId, { status: 'done' });
                 if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                 broadcastToSession(sessionId, { type: 'agentic_done', runId });
-
-                // Fire a brief summary so the user sees what the agent did.
-                broadcastSummaryAsync(sessionId, session.model || config.DEFAULT_MODEL, latestRun.goal, latestRun.plan).catch(console.error);
+                // The actual final report was already streamed to the client by handleEvent
+                // (final turn with no tool calls) and saved to DB by the runtime. No summary needed.
             }
         })();
 
@@ -542,6 +565,10 @@ Begin now.`;
                 let lastStartN = phase2StartIdx;
                 let lastDoneN  = phase2StartIdx;
                 let currentStepIdx = phase2StartIdx - 1;
+                // Track whether the current LLM turn had any tool calls.
+                // Turns with no tool calls are the final report turn — stream it to the client.
+                let currentTurnHasToolCall = false;
+                let currentTurnTextBuffer = '';
 
                 const STEP_START_RE = /\[STEP_START:(\d+)\]/g;
                 const STEP_DONE_RE  = /\[STEP_DONE:(\d+)\]/g;
@@ -557,6 +584,7 @@ Begin now.`;
                 const handleEvent = (event: AgentEvent) => {
                     if (event.type === 'text_delta' && event.content) {
                         fullText += event.content;
+                        currentTurnTextBuffer += event.content;
                         for (const m of fullText.matchAll(STEP_START_RE)) {
                             const absN = toAbsoluteN(parseInt(m[1], 10));
                             if (absN > lastStartN) {
@@ -582,6 +610,9 @@ Begin now.`;
                         if (fullText.includes(MARKER_P2)) fullText = fullText.replace(MARKER_P2, '');
                         if (fullText.length > 8192) fullText = fullText.slice(-4096);
                     } else if (event.type === 'tool_call_start') {
+                        // This turn has a tool call — it's a mid-run turn, not the final report.
+                        currentTurnHasToolCall = true;
+                        currentTurnTextBuffer = '';
                         broadcastToSession(sessionId, {
                             type: 'agentic_step_progress', runId,
                             stepIndex: currentStepIdx, tool: event.tool, status: 'running',
@@ -590,7 +621,18 @@ Begin now.`;
                     } else if (event.type === 'tool_call_result') {
                         broadcastToSession(sessionId, event);
                     } else if (event.type === 'message_end') {
-                        // Suppress mid-run message_end.
+                        if (!currentTurnHasToolCall && currentTurnTextBuffer.length > 0) {
+                            // This is the final report turn — stream the buffered text to the client.
+                            const chunks = currentTurnTextBuffer.match(/.{1,64}/gs) ?? [currentTurnTextBuffer];
+                            for (const chunk of chunks) {
+                                broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
+                            }
+                            // Forward message_end so the client triggers a session refetch.
+                            broadcastToSession(sessionId, event);
+                        }
+                        // Reset per-turn state.
+                        currentTurnHasToolCall = false;
+                        currentTurnTextBuffer = '';
                     } else {
                         broadcastToSession(sessionId, event);
                     }
@@ -601,7 +643,7 @@ Begin now.`;
                         {
                             sessionId,
                             model: session.model || config.DEFAULT_MODEL,
-                            systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+                            personality: session.personality || config.PERSONALITY,
                             mode: session.mode,
                             maxSteps: config.MAX_STEPS,
                             autoExecute: true,
@@ -616,8 +658,8 @@ Begin now.`;
                     updateAgenticRun(runId, { status: 'done' });
                     if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                     broadcastToSession(sessionId, { type: 'agentic_done', runId });
-                    // Fire a brief summary visible in the chat thread.
-                    broadcastSummaryAsync(sessionId, session.model || config.DEFAULT_MODEL, run.goal, run.plan).catch(console.error);
+                    // The actual final report was already streamed to the client by handleEvent
+                    // (final turn with no tool calls) and saved to DB by the runtime. No summary needed.
                 } catch (err) {
                     console.error('[Agentic] Phase 2 execution error:', err);
                     updateAgenticRun(runId, { status: 'cancelled' });
@@ -681,7 +723,7 @@ Begin now.`;
                 {
                     sessionId: run.sessionId,
                     model: session.model || config.DEFAULT_MODEL,
-                    systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+                    personality: session.personality || config.PERSONALITY,
                     mode: session.mode,
                     maxSteps: config.MAX_STEPS,
                     autoExecute: true,

@@ -1,4 +1,5 @@
 import { getConfig } from '../config.js';
+import { buildSystemPrompt } from './prompts.js';
 
 export interface PlanStep {
   id: string;
@@ -30,7 +31,7 @@ export function createPlan(goal: string): Plan {
 
 export function generatePlanPrompt(_goal: string): string {
   const config = getConfig();
-  return `${config.SYSTEM_PROMPT}
+  return `${buildSystemPrompt(config.PERSONALITY)}
 
 You are in PLAN mode. Break down the user's request into a series of specific steps. For each step, identify if a tool is needed.
 

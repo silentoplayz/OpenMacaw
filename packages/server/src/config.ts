@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { FORCEFUL_SYSTEM_PROMPT } from './agent/prompts.js';
 import { getDb } from './db/index.js';
 
 
@@ -20,7 +19,12 @@ const configSchema = z.object({
   MAX_STEPS: z.coerce.number().default(50),
   TEMPERATURE: z.coerce.number().default(1.0),
 
-  SYSTEM_PROMPT: z.string().default(FORCEFUL_SYSTEM_PROMPT),
+  /**
+   * Optional personality/style instructions supplied by the operator.
+   * These are appended to the immutable base system prompt (`FORCEFUL_SYSTEM_PROMPT`)
+   * and never replace it.  Store via PUT /api/settings/PERSONALITY.
+   */
+  PERSONALITY: z.string().default(''),
 });
 
 export type Config = z.infer<typeof configSchema>;

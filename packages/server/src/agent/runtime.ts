@@ -1,4 +1,5 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
+import { buildSystemPrompt } from './prompts.js';
 import { looksLikeHallucinatedAction } from '../llm/ollama.js';
 import { getAllTools, findServerIdForTool, getMCPServer } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
@@ -14,7 +15,11 @@ export type AgentMode = 'build' | 'plan';
 export interface AgentConfig {
   sessionId: string;
   model: string;
-  systemPrompt?: string;
+  /**
+   * Operator-supplied personality/style text.  Appended to the immutable base
+   * system prompt via `buildSystemPrompt()` — never replaces it.
+   */
+  personality?: string;
   mode: AgentMode;
   maxSteps: number;
   /**
@@ -98,9 +103,7 @@ export class AgentRuntime {
       .orderBy(asc(schema.messages.createdAt));
 
     if (history.length === 0) {
-      if (this.config.systemPrompt) {
-        this.messages = [{ role: 'system', content: this.config.systemPrompt }];
-      }
+      this.messages = [{ role: 'system', content: buildSystemPrompt(this.config.personality) }];
       return;
     }
 
@@ -128,11 +131,9 @@ export class AgentRuntime {
       return true;
     });
 
-    // Ensure system prompt is at the top
+    // Ensure system prompt is at the top (always present — even with no personality).
     if (this.messages.length === 0 || this.messages[0].role !== 'system') {
-      if (this.config.systemPrompt) {
-        this.messages.unshift({ role: 'system', content: this.config.systemPrompt });
-      }
+      this.messages.unshift({ role: 'system', content: buildSystemPrompt(this.config.personality) });
     }
 
     console.log(`[Agent] Loaded ${history.length} messages from history (${this.messages.length} after filtering)`);
