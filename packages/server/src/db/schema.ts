@@ -10,6 +10,14 @@ export const users = sqliteTable('users', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const userSettings = sqliteTable('user_settings', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  key: text('key').notNull(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const servers = sqliteTable('servers', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

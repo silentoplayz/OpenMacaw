@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Users, MessageSquare, Database, Trash2, ShieldAlert, Loader2, Pencil, X, Save } from 'lucide-react';
+import { Users, MessageSquare, Database, Trash2, ShieldAlert, Loader2, Pencil, X, Save, Cpu, Bot, Shield, CheckCircle2, Settings2, ToggleLeft, ToggleRight } from 'lucide-react';
 import { apiFetch } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -18,6 +18,17 @@ interface AdminUser {
   role: string;
   lastActive: string | null;
   createdAt: string;
+}
+
+interface WorkspaceSettings {
+  OLLAMA_BASE_URL?: string;
+  DEFAULT_PROVIDER?: string;
+  DEFAULT_MODEL?: string;
+  MAX_STEPS?: string;
+  TEMPERATURE?: string;
+  PERSONALITY?: string;
+  STRICT_JSON_MODE?: string;
+  MAX_DENIAL_RETRIES?: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -43,6 +54,19 @@ function timeAgo(dateInput: string | number | null): string {
   if (days === 1) return 'Yesterday';
   if (days < 30) return `${days}d ago`;
   return date.toLocaleDateString();
+}
+
+function Toggle({ enabled, onToggle, label }: { enabled: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button onClick={onToggle} className="flex items-center justify-between w-full py-2 group">
+      <span className="text-sm text-gray-300">{label}</span>
+      {enabled ? (
+        <ToggleRight className="w-6 h-6 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
+      ) : (
+        <ToggleLeft className="w-6 h-6 text-gray-600 group-hover:text-gray-400 transition-colors" />
+      )}
+    </button>
+  );
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
@@ -95,7 +119,6 @@ function EditUserModal({
           className="w-full max-w-md bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
             <div className="flex items-center gap-2">
               <Pencil className="w-4 h-4 text-cyan-400" />
@@ -105,65 +128,36 @@ function EditUserModal({
               <X className="w-4 h-4 text-gray-500 hover:text-white" />
             </button>
           </div>
-
-          {/* Body */}
           <div className="px-5 py-4 space-y-4">
             {error && (
               <div className="px-3 py-2 bg-rose-950/50 border border-rose-500/20 rounded-md text-xs text-rose-400 font-mono">
                 {error}
               </div>
             )}
-
             <div>
               <label className="block text-xs font-mono text-gray-400 mb-1">Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono"
-              />
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono" />
             </div>
-
             <div>
               <label className="block text-xs font-mono text-gray-400 mb-1">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono"
-              />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono" />
             </div>
-
             <div>
               <label className="block text-xs font-mono text-gray-400 mb-1">Role</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                disabled={isSelf}
-                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <select value={role} onChange={(e) => setRole(e.target.value)} disabled={isSelf}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono disabled:opacity-50 disabled:cursor-not-allowed">
                 <option value="admin">Admin</option>
                 <option value="user">User</option>
               </select>
-              {isSelf && (
-                <p className="mt-1 text-[10px] text-gray-600 font-mono">You cannot change your own role.</p>
-              )}
+              {isSelf && <p className="mt-1 text-[10px] text-gray-600 font-mono">You cannot change your own role.</p>}
             </div>
           </div>
-
-          {/* Footer */}
           <div className="px-5 py-4 border-t border-white/5 flex items-center justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs font-mono text-gray-400 hover:text-white hover:bg-white/5 rounded-md transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-colors disabled:opacity-50"
-            >
+            <button onClick={onClose} className="px-3 py-1.5 text-xs font-mono text-gray-400 hover:text-white hover:bg-white/5 rounded-md transition-colors">Cancel</button>
+            <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-colors disabled:opacity-50">
               {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               Save Changes
             </button>
@@ -181,6 +175,13 @@ export default function Admin() {
   const queryClient = useQueryClient();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+
+  // ── Workspace Settings state ──────────────────────────────────────────────
+  const [wsForm, setWsForm] = useState<WorkspaceSettings>({});
+  const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelCapability, setModelCapability] = useState<'ok' | 'no_tools' | 'checking' | null>(null);
 
   const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ['admin-stats'],
@@ -200,6 +201,17 @@ export default function Admin() {
     },
   });
 
+  // Fetch workspace (global) settings
+  useQuery<WorkspaceSettings>({
+    queryKey: ['workspace-settings'],
+    queryFn: async () => {
+      const res = await apiFetch('/api/settings');
+      const data = await res.json();
+      setWsForm(data);
+      return data;
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (userId: string) => {
       const res = await apiFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
@@ -216,40 +228,67 @@ export default function Admin() {
     },
   });
 
+  const wsSaveMutation = useMutation({
+    mutationFn: async (updates: WorkspaceSettings) => {
+      for (const [key, value] of Object.entries(updates)) {
+        await apiFetch(`/api/settings/${key}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-settings'] });
+      setWsSaveStatus('saved');
+      setTimeout(() => setWsSaveStatus('idle'), 2000);
+    },
+  });
+
+  const handleWsSave = () => {
+    setWsSaveStatus('saving');
+    wsSaveMutation.mutate(wsForm);
+  };
+
+  const fetchOllamaModels = async () => {
+    setFetchingModels(true);
+    try {
+      const res = await apiFetch('/api/ollama/tags');
+      const data = await res.json();
+      if (data.models) setAvailableModels(data.models.map((m: any) => m.name));
+    } catch { /* ignore */ } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  // Model capability check
+  useEffect(() => {
+    const model = wsForm.DEFAULT_MODEL;
+    if (!model) { setModelCapability(null); return; }
+    setModelCapability('checking');
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiFetch('/api/check-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model }),
+        });
+        const data = await res.json();
+        setModelCapability(data.supportsTools === true ? 'ok' : data.supportsTools === false ? 'no_tools' : null);
+      } catch { setModelCapability(null); }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [wsForm.DEFAULT_MODEL]);
+
   const statCards = [
-    {
-      label: 'Total Users',
-      value: stats?.totalUsers ?? '—',
-      icon: Users,
-      color: 'text-cyan-400',
-      bg: 'bg-cyan-950/30',
-      border: 'border-cyan-500/20',
-    },
-    {
-      label: 'Total Sessions',
-      value: stats?.totalSessions ?? '—',
-      icon: MessageSquare,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-950/30',
-      border: 'border-emerald-500/20',
-    },
-    {
-      label: 'Total Messages',
-      value: stats?.totalMessages ?? '—',
-      icon: MessageSquare,
-      color: 'text-amber-400',
-      bg: 'bg-amber-950/30',
-      border: 'border-amber-500/20',
-    },
-    {
-      label: 'Database Size',
-      value: stats ? formatBytes(stats.dbSizeBytes) : '—',
-      icon: Database,
-      color: 'text-purple-400',
-      bg: 'bg-purple-950/30',
-      border: 'border-purple-500/20',
-    },
+    { label: 'Total Users', value: stats?.totalUsers ?? '—', icon: Users, color: 'text-cyan-400', bg: 'bg-cyan-950/30', border: 'border-cyan-500/20' },
+    { label: 'Total Sessions', value: stats?.totalSessions ?? '—', icon: MessageSquare, color: 'text-emerald-400', bg: 'bg-emerald-950/30', border: 'border-emerald-500/20' },
+    { label: 'Total Messages', value: stats?.totalMessages ?? '—', icon: MessageSquare, color: 'text-amber-400', bg: 'bg-amber-950/30', border: 'border-amber-500/20' },
+    { label: 'Database Size', value: stats ? formatBytes(stats.dbSizeBytes) : '—', icon: Database, color: 'text-purple-400', bg: 'bg-purple-950/30', border: 'border-purple-500/20' },
   ];
+
+  const inputClass = "w-full px-3 py-2 border border-white/10 bg-zinc-900 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono text-sm placeholder-zinc-500";
+  const cardClass = "bg-zinc-900 border border-white/5 rounded-xl p-6";
 
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-black min-h-0">
@@ -260,7 +299,7 @@ export default function Admin() {
         </div>
         <div>
           <h1 className="text-lg font-bold text-white font-mono tracking-wide">Admin Console</h1>
-          <p className="text-xs text-gray-500 font-mono">System overview & user management</p>
+          <p className="text-xs text-gray-500 font-mono">System overview, user governance & workspace settings</p>
         </div>
       </div>
 
@@ -269,14 +308,9 @@ export default function Admin() {
         {statCards.map((card) => {
           const Icon = card.icon;
           return (
-            <div
-              key={card.label}
-              className={`${card.bg} border ${card.border} rounded-lg p-4 transition-all hover:scale-[1.02]`}
-            >
+            <div key={card.label} className={`${card.bg} border ${card.border} rounded-lg p-4 transition-all hover:scale-[1.02]`}>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
-                  {card.label}
-                </span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">{card.label}</span>
                 <Icon className={`w-4 h-4 ${card.color} opacity-60`} />
               </div>
               <p className={`text-2xl font-bold font-mono ${card.color}`}>
@@ -288,21 +322,16 @@ export default function Admin() {
       </div>
 
       {/* User Management Table */}
-      <div className="border border-white/10 rounded-lg overflow-hidden bg-zinc-950/50">
+      <div className="border border-white/10 rounded-lg overflow-hidden bg-zinc-950/50 mb-8">
         <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
           <span className="text-xs font-mono uppercase tracking-wider text-gray-500 flex items-center gap-2">
             <Users className="w-3.5 h-3.5 text-cyan-500" />
             User Management
           </span>
-          <span className="text-[10px] text-gray-600 font-mono">
-            {users?.length ?? 0} users
-          </span>
+          <span className="text-[10px] text-gray-600 font-mono">{users?.length ?? 0} users</span>
         </div>
-
         {usersLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
-          </div>
+          <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
         ) : !users || users.length === 0 ? (
           <div className="py-12 text-center text-sm text-gray-500">No users found.</div>
         ) : (
@@ -327,68 +356,39 @@ export default function Admin() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-7 h-7 rounded bg-zinc-800 border border-white/10 flex items-center justify-center shrink-0">
-                            <span className="text-xs font-mono font-bold text-gray-400 uppercase">
-                              {u.name?.charAt(0) || '?'}
-                            </span>
+                            <span className="text-xs font-mono font-bold text-gray-400 uppercase">{u.name?.charAt(0) || '?'}</span>
                           </div>
                           <span className="text-sm text-gray-200 font-medium">{u.name}</span>
                           {isSelf && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950/50 text-cyan-400 font-mono border border-cyan-500/20">
-                              you
-                            </span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950/50 text-cyan-400 font-mono border border-cyan-500/20">you</span>
                           )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400 font-mono">{u.email}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono uppercase tracking-wider ${
-                            u.role === 'admin'
-                              ? 'bg-amber-950/50 text-amber-400 border border-amber-500/30'
-                              : 'bg-blue-950/50 text-blue-400 border border-blue-500/30'
-                          }`}
-                        >
-                          {u.role}
-                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono uppercase tracking-wider ${
+                          u.role === 'admin' ? 'bg-amber-950/50 text-amber-400 border border-amber-500/30' : 'bg-blue-950/50 text-blue-400 border border-blue-500/30'
+                        }`}>{u.role}</span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 font-mono">
-                        {timeAgo(u.lastActive)}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 font-mono">
-                        {new Date(u.createdAt).toLocaleDateString()}
-                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500 font-mono">{timeAgo(u.lastActive)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500 font-mono">{new Date(u.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3 text-right">
                         {isConfirming ? (
                           <div className="flex items-center gap-1.5 justify-end">
-                            <button
-                              onClick={() => deleteMutation.mutate(u.id)}
-                              disabled={deleteMutation.isPending}
-                              className="px-2 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-rose-950/50 text-rose-400 border border-rose-500/30 rounded hover:bg-rose-900/50 transition-colors"
-                            >
+                            <button onClick={() => deleteMutation.mutate(u.id)} disabled={deleteMutation.isPending}
+                              className="px-2 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-rose-950/50 text-rose-400 border border-rose-500/30 rounded hover:bg-rose-900/50 transition-colors">
                               {deleteMutation.isPending ? '...' : 'Confirm'}
                             </button>
-                            <button
-                              onClick={() => setConfirmDeleteId(null)}
-                              className="px-2 py-1 text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors"
-                            >
-                              Cancel
-                            </button>
+                            <button onClick={() => setConfirmDeleteId(null)}
+                              className="px-2 py-1 text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors">Cancel</button>
                           </div>
                         ) : (
                           <div className="flex items-center gap-1 justify-end">
-                            <button
-                              onClick={() => setEditingUser(u)}
-                              className="p-1.5 rounded hover:bg-cyan-950/30 text-gray-500 hover:text-cyan-400 transition-colors"
-                              title="Edit user"
-                            >
+                            <button onClick={() => setEditingUser(u)} className="p-1.5 rounded hover:bg-cyan-950/30 text-gray-500 hover:text-cyan-400 transition-colors" title="Edit user">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             {!isSelf && (
-                              <button
-                                onClick={() => setConfirmDeleteId(u.id)}
-                                className="p-1.5 rounded hover:bg-rose-950/30 text-gray-500 hover:text-rose-400 transition-colors"
-                                title="Delete user"
-                              >
+                              <button onClick={() => setConfirmDeleteId(u.id)} className="p-1.5 rounded hover:bg-rose-950/30 text-gray-500 hover:text-rose-400 transition-colors" title="Delete user">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -402,6 +402,141 @@ export default function Admin() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════════
+          WORKSPACE SETTINGS — Admin-only global configuration
+          ═══════════════════════════════════════════════════════════════════════════ */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Settings2 className="w-4 h-4 text-amber-400" />
+            <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Workspace Settings</h2>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/50 text-amber-400 font-mono border border-amber-500/20">Admin Only</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {wsSaveStatus === 'saved' && <span className="text-green-500 text-xs font-mono animate-pulse">Saved!</span>}
+            <button onClick={handleWsSave} disabled={wsSaveStatus === 'saving'}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-colors text-xs font-bold font-mono uppercase tracking-wider">
+              {wsSaveStatus === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save Workspace
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* LLM Provider Defaults */}
+          <div className={cardClass}>
+            <div className="flex items-center gap-2 mb-4">
+              <Cpu className="w-4 h-4 text-cyan-500" />
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">LLM Provider Defaults</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Ollama Base URL</label>
+                <input type="text" value={wsForm.OLLAMA_BASE_URL || ''} onChange={(e) => setWsForm({ ...wsForm, OLLAMA_BASE_URL: e.target.value })}
+                  placeholder="http://localhost:11434" className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Default Provider</label>
+                <select value={wsForm.DEFAULT_PROVIDER || 'anthropic'} onChange={(e) => setWsForm({ ...wsForm, DEFAULT_PROVIDER: e.target.value })} className={inputClass}>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="ollama">Ollama (Local)</option>
+                </select>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <label className="block text-xs font-medium text-gray-400">Default Model</label>
+                    {modelCapability === 'checking' && <Loader2 className="w-3 h-3 text-cyan-500 animate-spin" />}
+                    {modelCapability === 'ok' && (
+                      <span className="flex items-center gap-1 text-[9px] font-mono text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20">
+                        <CheckCircle2 className="w-3 h-3" /> Tool capable
+                      </span>
+                    )}
+                    {modelCapability === 'no_tools' && (
+                      <span className="flex items-center gap-1 text-[9px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                        <ShieldAlert className="w-3 h-3" /> No tool support
+                      </span>
+                    )}
+                  </div>
+                  {wsForm.DEFAULT_PROVIDER === 'ollama' && (
+                    <button onClick={fetchOllamaModels} disabled={fetchingModels}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50 flex items-center gap-1 font-mono">
+                      {fetchingModels && <Loader2 className="w-3 h-3 animate-spin" />} Refresh
+                    </button>
+                  )}
+                </div>
+                {availableModels.length > 0 && wsForm.DEFAULT_PROVIDER === 'ollama' ? (
+                  <select value={wsForm.DEFAULT_MODEL || ''} onChange={(e) => setWsForm({ ...wsForm, DEFAULT_MODEL: e.target.value })} className={inputClass}>
+                    <option value="">Select a model...</option>
+                    {availableModels.map(model => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                ) : (
+                  <input type="text" value={wsForm.DEFAULT_MODEL || ''} onChange={(e) => setWsForm({ ...wsForm, DEFAULT_MODEL: e.target.value })}
+                    placeholder="claude-sonnet-4-5-20250929" className={inputClass} />
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Agent Behavior */}
+          <div className={cardClass}>
+            <div className="flex items-center gap-2 mb-4">
+              <Bot className="w-4 h-4 text-cyan-500" />
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">Agent Behavior</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Max Steps</label>
+                <input type="number" value={wsForm.MAX_STEPS || '50'} onChange={(e) => setWsForm({ ...wsForm, MAX_STEPS: e.target.value })} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Temperature</label>
+                <input type="number" step="0.1" min="0" max="2" value={wsForm.TEMPERATURE || '1.0'}
+                  onChange={(e) => setWsForm({ ...wsForm, TEMPERATURE: e.target.value })} className={inputClass} />
+              </div>
+            </div>
+          </div>
+
+          {/* Advanced Directives */}
+          <div className={cardClass}>
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-4 h-4 text-cyan-500" />
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">Advanced Directives</h3>
+            </div>
+            <div className="space-y-3">
+              <Toggle
+                enabled={wsForm.STRICT_JSON_MODE === 'true'}
+                onToggle={() => setWsForm({ ...wsForm, STRICT_JSON_MODE: wsForm.STRICT_JSON_MODE === 'true' ? 'false' : 'true' })}
+                label="Strict JSON Mode"
+              />
+              <p className="text-[10px] text-gray-600 font-mono leading-relaxed">
+                Forces output as structured JSON with response_format.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Max Retries on Denial</label>
+                <input type="number" min="1" max="10" value={wsForm.MAX_DENIAL_RETRIES || '3'}
+                  onChange={(e) => setWsForm({ ...wsForm, MAX_DENIAL_RETRIES: e.target.value })} className={inputClass} />
+              </div>
+            </div>
+          </div>
+
+          {/* Personality */}
+          <div className={`${cardClass} md:col-span-2 lg:col-span-3`}>
+            <div className="flex items-center gap-2 mb-2">
+              <Bot className="w-4 h-4 text-cyan-500" />
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">Personality</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-3 font-mono leading-relaxed">
+              Describe the agent's style, tone, or domain focus. Appended to the base system prompt for all users.
+            </p>
+            <textarea value={wsForm.PERSONALITY || ''} onChange={(e) => setWsForm({ ...wsForm, PERSONALITY: e.target.value })}
+              placeholder="e.g. Respond concisely in bullet points. Focus on Python and DevOps tasks."
+              rows={6} className={`${inputClass} resize-none`} />
+          </div>
+        </div>
       </div>
 
       {/* Edit User Modal */}

@@ -14,6 +14,7 @@ const TABLE_SQL: Record<string, string> = {
   pipeline_log: 'pipeline_log',
   settings: 'settings',
   pipelines: 'pipelines',
+  user_settings: 'user_settings',
 };
 
 // Primary key column (snake_case) per SQL table name
@@ -27,6 +28,7 @@ const TABLE_PK: Record<string, string> = {
   pipeline_log: 'id',
   settings: 'key',
   pipelines: 'id',
+  user_settings: 'id',
 };
 
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -199,6 +201,15 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_activity_session ON activity_log(session_id);
   CREATE INDEX IF NOT EXISTS idx_activity_server ON activity_log(server_id);
   CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
+
+  CREATE TABLE IF NOT EXISTS user_settings (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(user_id, key)
+  );
 `;
 
 // ── JSON → SQLite migration ───────────────────────────────────────────────────
@@ -439,4 +450,5 @@ export const schema = {
   pipelineLog: 'pipeline_log',
   settings: 'settings',
   pipelines: 'pipelines',
+  userSettings: 'user_settings',
 } as const;

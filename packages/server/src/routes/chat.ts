@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
-import { getActiveSettings } from '../config.js';
+import { getActiveSettingsForUser } from '../config.js';
 
 const chatSchema = z.discriminatedUnion('type', [
   z.object({
@@ -73,7 +73,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             return;
           }
 
-          const config = getActiveSettings();
+          const config = getActiveSettingsForUser(session.userId);
           console.log('[WebSocket] Creating agent with model:', model || session.model || config.DEFAULT_MODEL);
 
           // Register an AbortController for this session so the stop endpoint can cancel it
@@ -160,7 +160,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Session not found' });
     }
 
-    const config = getActiveSettings();
+    const config = getActiveSettingsForUser(session.userId);
     const events: AgentEvent[] = [];
 
     const eventHandler = (event: AgentEvent) => {

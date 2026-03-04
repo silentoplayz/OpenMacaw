@@ -71,3 +71,51 @@ export function getActiveSettings(): Config {
   }
 }
 
+/**
+ * Returns raw key/value pairs from user_settings for a given user.
+ * Used by the user settings API.
+ */
+export function getUserSettingsRaw(userId: string): Record<string, string> {
+  try {
+    const db = getDb();
+    const rows = db.select('user_settings' as any)
+      .where((col: (k: string) => any) => col('userId') === userId)
+      .all() as { key: string; value: string }[];
+
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      result[row.key] = row.value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolution cascade: User Settings → Global DB Settings → Environment Variables.
+ * Used when running the agent for a specific user so their personal API keys
+ * (BYOK) take priority over workspace defaults.
+ */
+export function getActiveSettingsForUser(userId: string): Config {
+  const globalConfig = getActiveSettings();
+  try {
+    const userOverrides = getUserSettingsRaw(userId);
+    if (Object.keys(userOverrides).length === 0) return globalConfig;
+
+    // Merge: env → global DB → user-level (user wins)
+    const db = getDb();
+    const globalRows = db.select('settings').where().all() as { key: string; value: string }[];
+    const globalOverrides: Record<string, string> = {};
+    for (const row of globalRows) {
+      if (row.value !== undefined && row.value !== '') {
+        globalOverrides[row.key] = row.value;
+      }
+    }
+
+    return configSchema.parse({ ...process.env, ...globalOverrides, ...userOverrides });
+  } catch {
+    return globalConfig;
+  }
+}
+
