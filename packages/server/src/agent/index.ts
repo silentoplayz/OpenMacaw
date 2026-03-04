@@ -3,3 +3,7 @@ export { createPlan, generatePlanPrompt, parsePlanFromResponse, executePlan } fr
 export type { Plan, PlanStep } from './planner.js';
 export { createSession, getSession, listSessions, updateSession, deleteSession, ensureDefaultSession } from './session.js';
 export type { SessionData } from './session.js';
+export {
+    createAgenticRun, getAgenticRun, updateAgenticRun, addPendingAction, deleteAgenticRun, getRunsBySession,
+    type AgenticRunState, type AgenticRunStatus, type AgenticPlanStep, type PendingAction,
+} from './agenticRun.js';

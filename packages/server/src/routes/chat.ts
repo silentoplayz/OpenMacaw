@@ -20,11 +20,25 @@ const chatSchema = z.discriminatedUnion('type', [
 // Registry to track active WebSocket connections for each session
 export const socketRegistry = new Map<string, (event: AgentEvent) => void>();
 
+// Per-session abort controllers — one per active LLM stream
+export const sessionAbortControllers = new Map<string, AbortController>();
+
 export function broadcastToSession(sessionId: string, event: AgentEvent) {
   const handler = socketRegistry.get(sessionId);
   if (handler) {
     handler(event);
   }
+}
+
+/** Abort the active stream for a session, if any. Returns true if something was aborted. */
+export function abortSession(sessionId: string): boolean {
+  const ctrl = sessionAbortControllers.get(sessionId);
+  if (ctrl) {
+    ctrl.abort();
+    sessionAbortControllers.delete(sessionId);
+    return true;
+  }
+  return false;
 }
 
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
@@ -62,16 +76,26 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           const config = getActiveSettings();
           console.log('[WebSocket] Creating agent with model:', model || session.model || config.DEFAULT_MODEL);
 
-          await createAgentRuntime(
-            {
-              sessionId,
-              model: model || session.model || config.DEFAULT_MODEL,
-              systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
-              mode: mode || session.mode,
-              maxSteps: config.MAX_STEPS,
-            },
-            sendEvent
-          ).run(userMessage);
+          // Register an AbortController for this session so the stop endpoint can cancel it
+          const abortCtrl = new AbortController();
+          sessionAbortControllers.set(sessionId, abortCtrl);
+
+          try {
+            await createAgentRuntime(
+              {
+                sessionId,
+                model: model || session.model || config.DEFAULT_MODEL,
+                systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
+                mode: mode || session.mode,
+                maxSteps: config.MAX_STEPS,
+                signal: abortCtrl.signal,
+              },
+              sendEvent
+            ).run(userMessage);
+          } finally {
+            // Always clean up — whether run completed, errored, or was aborted
+            sessionAbortControllers.delete(sessionId);
+          }
 
         } else if (parsed.type === 'join') {
           const { sessionId } = parsed;
@@ -98,6 +122,17 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         }
       }
     });
+  });
+
+  // POST /api/sessions/:id/stop — abort the active LLM stream for a session
+  fastify.post('/api/sessions/:id/stop', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const aborted = abortSession(id);
+    if (aborted) {
+      broadcastToSession(id, { type: 'error', message: 'Generation stopped by user.' });
+      return reply.send({ stopped: true });
+    }
+    return reply.code(404).send({ stopped: false, error: 'No active stream for this session' });
   });
 
   // HTTP test endpoint for quick testing without WebSocket

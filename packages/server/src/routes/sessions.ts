@@ -47,6 +47,7 @@ export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
         content: m.content,
         toolCalls: m.toolCalls,
         toolResults: m.toolResults,
+        status: m.status,
         model: m.model,
         inputTokens: m.inputTokens,
         outputTokens: m.outputTokens,

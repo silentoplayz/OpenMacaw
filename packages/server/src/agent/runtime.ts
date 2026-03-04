@@ -25,6 +25,12 @@ export interface AgentConfig {
   autoExecute?: boolean;
 
   /**
+   * Optional signal that, when aborted, terminates the current LLM stream
+   * mid-generation. Used by the stop-button endpoint.
+   */
+  signal?: AbortSignal;
+
+  /**
    * Optional async gate called before each tool execution when autoExecute is
    * true. Return `true` to allow the call, `false` to deny it. When omitted,
    * all permitted tool calls execute without further confirmation.
@@ -54,7 +60,14 @@ export type AgentEvent =
   | { type: 'canary_leak_detected'; step: string }
   | { type: 'sanitizer_flagged'; strippedSegments: string[] }
   | { type: 'step_verified'; stepId: string; confidence: number; passed: boolean; anomalies: string[] }
-  | { type: 'pipeline_halted'; reason: string; anomalies: string[] };
+  | { type: 'pipeline_halted'; reason: string; anomalies: string[] }
+  // ── Agentic Run lifecycle events ──────────────────────────────────────────
+  | { type: 'agentic_plan_proposed'; runId: string; goal: string; plan: { id: string; description: string; tool?: string; server?: string }[]; requireFinalApproval?: boolean; completionGoal?: string }
+  | { type: 'agentic_running'; runId: string }
+  | { type: 'agentic_step_progress'; runId: string; stepIndex: number; tool: string; status: 'running' | 'done' | 'error' }
+  | { type: 'agentic_final_checkpoint'; runId: string; pendingActions: { tool: string; server: string; input: Record<string, unknown>; result?: unknown; executedAt: string }[] }
+  | { type: 'agentic_done'; runId: string }
+  | { type: 'agentic_cancelled'; runId: string; reason?: string };
 
 export const activeStreams = new Set<AbortController>();
 
@@ -158,6 +171,11 @@ export class AgentRuntime {
 
       const abortController = new AbortController();
       activeStreams.add(abortController);
+
+      // If a session-level abort signal was provided, forward it to this turn's controller
+      if (this.config.signal) {
+        this.config.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+      }
 
       // Signal that we are now waiting on the LLM.
       this.eventHandler({ type: 'pipeline_stage', stage: 'generating' });
@@ -264,22 +282,26 @@ export class AgentRuntime {
   // Returns true if execution should halt because a proposal was emitted.
   private async handleToolCall(toolCall: ToolCall, precedingText = ''): Promise<boolean> {
     // ── Task 4: Safety Brake ─────────────────────────────────────────────────
-    // Track tool-call timestamps and abort if too many fire in a short window.
-    const now = Date.now();
-    this.toolCallTimestamps = this.toolCallTimestamps.filter(
-      (t) => now - t < this.RATE_LIMIT_WINDOW_MS
-    );
-    this.toolCallTimestamps.push(now);
-
-    if (this.toolCallTimestamps.length > this.RATE_LIMIT_MAX_CALLS) {
-      console.error(
-        `[Agent] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
+    // Only applies in interactive (non-agentic) mode. In autoExecute mode the
+    // user already approved the full plan, so rapid sequential tool calls are
+    // expected and should NOT be throttled.
+    if (!this.config.autoExecute) {
+      const now = Date.now();
+      this.toolCallTimestamps = this.toolCallTimestamps.filter(
+        (t) => now - t < this.RATE_LIMIT_WINDOW_MS
       );
-      this.eventHandler({
-        type: 'error',
-        message: 'Loop detected. Guardian engaged.',
-      });
-      return true; // halt the run() loop immediately
+      this.toolCallTimestamps.push(now);
+
+      if (this.toolCallTimestamps.length > this.RATE_LIMIT_MAX_CALLS) {
+        console.error(
+          `[Agent] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
+        );
+        this.eventHandler({
+          type: 'error',
+          message: 'Loop detected. Guardian engaged.',
+        });
+        return true; // halt the run() loop immediately
+      }
     }
 
     let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);

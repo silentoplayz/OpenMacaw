@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useReducer } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Loader2, ShieldCheck, Shield, Check, Copy, AlertTriangle, X, Wrench, ChevronDown, ChevronUp } from 'lucide-react';
+import { Trash2, Loader2, ShieldCheck, Shield, Check, Copy, AlertTriangle, X, Wrench, ChevronDown, ChevronUp, Zap, Bot, GripVertical, Flag, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch, getWsUrl, type AgentEvent } from '../api';
@@ -91,6 +91,464 @@ function DeniedCollapsible({ reason }: { reason: string }) {
   );
 }
 
+// ── Agentic Plan Card ────────────────────────────────────────────────────────
+// Shown when the AI has generated a plan and is waiting for user approval.
+// Features:
+//   • Drag-to-reorder steps via the grip handle
+//   • Click the flag icon (when requireFinal is on) to set any step as the checkpoint
+//   • Add a custom step at the bottom and drag it into position
+function AgenticPlanCard({ runId, goal, plan: initialPlan, sessionId, onAction, initialRequireFinal }: {
+  runId: string;
+  goal: string;
+  plan: { id: string; description: string; tool?: string; server?: string }[];
+  sessionId: string | null;
+  onAction: () => void;
+  initialRequireFinal?: boolean;
+  initialCompletionGoal?: string; // kept for backwards-compat, no longer used directly
+}) {
+  const [status, setStatus] = useState<'idle' | 'approving' | 'denying' | 'done' | 'cancelled'>('idle');
+  const [requireFinal, setRequireFinal] = useState(initialRequireFinal ?? false);
+  // Local copy of the plan so the user can reorder / add custom steps
+  const [localPlan, setLocalPlan] = useState(initialPlan);
+  // The step ID marked as the checkpoint (agent pauses after completing this step)
+  const [checkpointStepId, setCheckpointStepId] = useState<string | null>(null);
+  // New custom step input
+  const [newStepText, setNewStepText] = useState('');
+  // Drag state
+  const dragSrcIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // ── Drag handlers ───────────────────────────────────────────────────────────
+  const handleDragStart = (idx: number) => (e: React.DragEvent) => {
+    dragSrcIdx.current = idx;
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const handleDragOver = (idx: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIdx(idx);
+  };
+  const handleDrop = (idx: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const src = dragSrcIdx.current;
+    if (src === null || src === idx) { setDragOverIdx(null); return; }
+    const next = [...localPlan];
+    const [moved] = next.splice(src, 1);
+    next.splice(idx, 0, moved);
+    setLocalPlan(next);
+    dragSrcIdx.current = null;
+    setDragOverIdx(null);
+  };
+  const handleDragEnd = () => { dragSrcIdx.current = null; setDragOverIdx(null); };
+
+  // ── Add custom step ─────────────────────────────────────────────────────────
+  const addCustomStep = () => {
+    const text = newStepText.trim();
+    if (!text) return;
+    const { nanoid } = { nanoid: () => Math.random().toString(36).slice(2, 11) };
+    setLocalPlan(prev => [...prev, { id: `custom-${nanoid()}`, description: text }]);
+    setNewStepText('');
+  };
+
+  // ── Approve / Deny ──────────────────────────────────────────────────────────
+  const handleApprove = async () => {
+    setStatus('approving');
+    // Derive checkpoint step index (0-based) from the flagged step in the local plan.
+    const cpIdx = checkpointStepId ? localPlan.findIndex(s => s.id === checkpointStepId) : -1;
+    const checkpointStep = cpIdx >= 0 ? localPlan[cpIdx] : null;
+    try {
+      await apiFetch(`/api/agentic/${runId}/approve-plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requireFinalApproval: requireFinal,
+          completionGoal: requireFinal && checkpointStep ? checkpointStep.description : undefined,
+          checkpointStepIdx: requireFinal && cpIdx >= 0 ? cpIdx : undefined,
+          plan: localPlan,
+        }),
+      });
+      setStatus('done');
+      onAction();
+    } catch (e) {
+      console.error('[AgenticPlanCard] Approve failed:', e);
+      setStatus('idle');
+    }
+  };
+
+  const handleDeny = async () => {
+    setStatus('denying');
+    try {
+      await apiFetch(`/api/agentic/${runId}/deny-plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Denied by user' }),
+      });
+      setStatus('cancelled');
+      onAction();
+    } catch (e) {
+      console.error('[AgenticPlanCard] Deny failed:', e);
+      setStatus('idle');
+    }
+  };
+
+  if (status === 'done') {
+    return (
+      <div className="mt-2 bg-violet-950/20 border border-violet-500/20 rounded-md p-3 flex items-center gap-2">
+        <Zap className="w-3 h-3 text-violet-400" />
+        <span className="text-[10px] font-mono text-violet-400 uppercase tracking-wider">Agent Running Autonomously…</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse ml-auto" />
+      </div>
+    );
+  }
+
+  if (status === 'cancelled') {
+    return (
+      <div className="mt-2 bg-rose-950/20 border border-rose-500/20 rounded-md p-3 flex items-center gap-2">
+        <X className="w-3 h-3 text-rose-400" />
+        <span className="text-[10px] font-mono text-rose-400 uppercase tracking-wider">Agentic Run Cancelled</span>
+      </div>
+    );
+  }
+
+  const isLoading = status === 'approving' || status === 'denying';
+  const checkpointIdx = checkpointStepId ? localPlan.findIndex(s => s.id === checkpointStepId) : -1;
+
+  return (
+    <div className="mt-2 bg-zinc-950 border border-violet-500/30 rounded-xl overflow-hidden shadow-2xl">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-violet-500/10 flex items-center gap-2 bg-violet-950/20">
+        <Zap className="w-4 h-4 text-violet-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-mono text-violet-300 uppercase tracking-wider">Agentic Plan Proposed</p>
+          <p className="text-sm text-gray-200 mt-0.5 font-medium truncate">{goal}</p>
+        </div>
+      </div>
+
+      {/* Plan Steps */}
+      <div className="p-4 space-y-2">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+            Planned Steps ({localPlan.length})
+          </p>
+          {requireFinal && (
+            <p className="text-[9px] font-mono text-violet-400/70">
+              Click <Flag className="w-2.5 h-2.5 inline mb-0.5" /> to set checkpoint · drag <GripVertical className="w-2.5 h-2.5 inline mb-0.5" /> to reorder
+            </p>
+          )}
+          {!requireFinal && (
+            <p className="text-[9px] font-mono text-gray-600">
+              Drag <GripVertical className="w-2.5 h-2.5 inline mb-0.5" /> to reorder
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          {localPlan.map((step, idx) => {
+            const isCheckpoint = step.id === checkpointStepId;
+            const isDragTarget = dragOverIdx === idx;
+            const isPastCheckpoint = checkpointIdx >= 0 && idx > checkpointIdx;
+
+            return (
+              <div key={step.id}>
+                {/* Drop zone indicator above */}
+                {isDragTarget && dragSrcIdx.current !== null && dragSrcIdx.current !== idx && (
+                  <div className="h-0.5 bg-violet-500 rounded-full mb-1 mx-2" />
+                )}
+                <div
+                  draggable
+                  onDragStart={handleDragStart(idx)}
+                  onDragOver={handleDragOver(idx)}
+                  onDrop={handleDrop(idx)}
+                  onDragEnd={handleDragEnd}
+                  className={`flex items-start gap-2 px-3 py-2 rounded-lg border transition-all duration-150 cursor-default select-none ${
+                    isCheckpoint
+                      ? 'bg-violet-950/40 border-violet-500/50 ring-1 ring-violet-500/30'
+                      : isPastCheckpoint
+                        ? 'bg-black/20 border-white/3 opacity-40'
+                        : isDragTarget
+                          ? 'bg-violet-950/20 border-violet-500/30'
+                          : 'bg-black/40 border-white/5 hover:border-white/10'
+                  }`}
+                >
+                  {/* Drag handle */}
+                  <span
+                    className="shrink-0 mt-0.5 text-gray-600 hover:text-gray-400 cursor-grab active:cursor-grabbing"
+                    title="Drag to reorder"
+                  >
+                    <GripVertical className="w-3 h-3" />
+                  </span>
+
+                  {/* Step number */}
+                  <span className={`text-[10px] font-mono shrink-0 mt-0.5 w-4 text-right ${isCheckpoint ? 'text-violet-400' : isPastCheckpoint ? 'text-gray-600' : 'text-violet-500'}`}>
+                    {idx + 1}.
+                  </span>
+
+                  {/* Step content */}
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[12px] ${isCheckpoint ? 'text-violet-200' : isPastCheckpoint ? 'text-gray-600' : 'text-gray-300'}`}>
+                      {step.description}
+                    </p>
+                    {step.tool && (
+                      <span className="inline-block mt-1 px-1.5 py-0.5 bg-cyan-950/40 border border-cyan-500/20 rounded text-[9px] font-mono text-cyan-400">{step.tool}</span>
+                    )}
+                  </div>
+
+                  {/* Checkpoint flag button — only visible when requireFinal is on */}
+                  {requireFinal && (
+                    <button
+                      onClick={() => setCheckpointStepId(isCheckpoint ? null : step.id)}
+                      title={isCheckpoint ? 'Remove checkpoint' : 'Set as Goal Before Final Confirmation Prompt'}
+                      className={`shrink-0 p-1 rounded transition-all ${
+                        isCheckpoint
+                          ? 'text-violet-400 bg-violet-950/50 hover:bg-violet-900/50'
+                          : 'text-gray-600 hover:text-violet-400 hover:bg-violet-950/30'
+                      }`}
+                    >
+                      <Flag className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Checkpoint label below the selected step */}
+                {isCheckpoint && (
+                  <div className="flex items-center gap-1.5 ml-8 mt-0.5 mb-1">
+                    <div className="h-px flex-1 bg-violet-500/30" />
+                    <span className="text-[9px] font-mono text-violet-400 px-2 py-0.5 bg-violet-950/40 rounded border border-violet-500/20">
+                      ▲ Agent pauses here for final review
+                    </span>
+                    <div className="h-px flex-1 bg-violet-500/30" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add custom step */}
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="text"
+            value={newStepText}
+            onChange={e => setNewStepText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomStep(); } }}
+            placeholder="Add a custom step and drag it into position…"
+            className="flex-1 px-3 py-1.5 bg-black/50 border border-white/10 rounded-lg text-[12px] text-gray-300 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500/30 focus:border-violet-500/20 transition-colors"
+          />
+          <button
+            onClick={addCustomStep}
+            disabled={!newStepText.trim()}
+            title="Add step"
+            className="p-1.5 bg-black border border-white/10 hover:bg-violet-950/30 hover:border-violet-500/30 text-gray-500 hover:text-violet-400 rounded-lg transition-colors disabled:opacity-30"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Final approval checkbox */}
+        <div className="mt-4 pt-4 border-t border-white/5">
+          <label className="flex items-start gap-3 cursor-pointer group">
+            <div
+              className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0 ${requireFinal ? 'bg-violet-600 border-violet-500' : 'bg-black border-white/20 group-hover:border-violet-500/40'}`}
+              onClick={() => {
+                const next = !requireFinal;
+                setRequireFinal(next);
+                if (!next) setCheckpointStepId(null); // clear checkpoint when disabling
+              }}
+            >
+              {requireFinal && <Check className="w-2.5 h-2.5 text-white" />}
+            </div>
+            <div>
+              <span className="text-sm text-gray-300 font-medium">Request final approval before committing</span>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                Agent pauses {checkpointStepId ? 'after the flagged step' : 'when all steps are done'} and shows a summary of every action taken.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        {/* Warning */}
+        <div className="px-3 py-2 bg-amber-950/20 border border-amber-500/20 rounded-lg flex items-start gap-2 mt-3">
+          <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-gray-500">
+            The agent will execute tool calls <strong className="text-amber-300">without individual confirmation</strong>. Permission rules still apply.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={handleDeny}
+            disabled={isLoading}
+            className="flex-1 px-3 py-2 bg-black border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded-lg transition-colors disabled:opacity-50"
+          >
+            {status === 'denying' ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Deny Plan'}
+          </button>
+          <button
+            onClick={handleApprove}
+            disabled={isLoading}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded-lg transition-all shadow-[0_0_15px_rgba(139,92,246,0.3)] hover:shadow-[0_0_25px_rgba(139,92,246,0.5)]"
+          >
+            {status === 'approving' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            {status === 'approving' ? 'Starting…' : 'Approve & Run'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Agentic Final Checkpoint Card ─────────────────────────────────────────────
+// Shown when the agent believes it has reached the user's goal and wants confirmation.
+function AgenticFinalCheckpointCard({ runId, pendingActions, onDismiss }: {
+  runId: string;
+  pendingActions: { tool: string; server: string; input: Record<string, unknown>; result?: unknown; executedAt: string }[];
+  onDismiss: () => void;
+}) {
+  const [status, setStatus] = useState<'idle' | 'confirming' | 'discarding' | 'confirmed' | 'discarded'>('idle');
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleConfirm = async () => {
+    setStatus('confirming');
+    setErrorMsg(null);
+    try {
+      const res = await apiFetch(`/api/agentic/${runId}/confirm-goal`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error || `Server error ${res.status}`);
+      }
+      setStatus('confirmed');
+      // Dismiss the overlay after 1.5s so the user can see the confirmed state
+      setTimeout(onDismiss, 1500);
+    } catch (e: any) {
+      console.error('[AgenticFinalCheckpointCard] Confirm failed:', e);
+      setErrorMsg(e.message || 'Failed to confirm. Please try again.');
+      setStatus('idle');
+    }
+  };
+
+  const handleDiscard = async () => {
+    setStatus('discarding');
+    setErrorMsg(null);
+    try {
+      const res = await apiFetch(`/api/agentic/${runId}/deny-goal`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error || `Server error ${res.status}`);
+      }
+      setStatus('discarded');
+      setTimeout(onDismiss, 1500);
+    } catch (e: any) {
+      console.error('[AgenticFinalCheckpointCard] Discard failed:', e);
+      setErrorMsg(e.message || 'Failed to discard. Please try again.');
+      setStatus('idle');
+    }
+  };
+
+  if (status === 'confirmed') {
+    return (
+      <div className="mt-2 bg-green-950/20 border border-green-500/20 rounded-md p-3 flex items-center justify-between">
+        <span className="text-[10px] font-mono text-green-400 uppercase tracking-wider">Goal Confirmed — Completing…</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
+      </div>
+    );
+  }
+
+  if (status === 'discarded') {
+    return (
+      <div className="mt-2 bg-rose-950/20 border border-rose-500/20 rounded-md p-3 flex items-center gap-2">
+        <X className="w-3 h-3 text-rose-400" />
+        <span className="text-[10px] font-mono text-rose-400 uppercase tracking-wider">Discarded — Attempting Reversal…</span>
+      </div>
+    );
+  }
+
+  const isLoading = status === 'confirming' || status === 'discarding';
+
+  return (
+    <div className="mt-2 bg-zinc-950 border border-amber-500/30 rounded-xl overflow-hidden shadow-2xl">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-amber-500/10 flex items-center gap-2 bg-amber-950/20">
+        <Bot className="w-4 h-4 text-amber-400 shrink-0" />
+        <div>
+          <p className="text-[10px] font-mono text-amber-300 uppercase tracking-wider">Final Approval Checkpoint</p>
+          <p className="text-sm text-gray-300 mt-0.5">The agent believes it has reached your goal. Review actions below.</p>
+        </div>
+      </div>
+
+      {/* Actions Summary */}
+      <div className="p-4 space-y-2">
+        <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-3">
+          Actions Taken ({pendingActions.length})
+        </p>
+        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+          {pendingActions.map((action, idx) => (
+            <div
+              key={idx}
+              className="bg-black/40 border border-white/5 rounded-lg overflow-hidden cursor-pointer"
+              onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
+            >
+              <div className="px-3 py-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Wrench className="w-3 h-3 text-cyan-500/70 shrink-0" />
+                  <span className="text-[11px] font-mono text-cyan-400 truncate">{action.tool}</span>
+                  {action.server && <span className="text-[9px] font-mono text-gray-600 bg-white/5 px-1.5 py-0.5 rounded shrink-0">{action.server}</span>}
+                </div>
+                {expandedIdx === idx ? <ChevronUp className="w-3 h-3 text-gray-600 shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-600 shrink-0" />}
+              </div>
+              {expandedIdx === idx && (
+                <div className="px-3 pb-2 border-t border-white/5">
+                  <pre className="text-[10px] font-mono text-gray-500 overflow-x-auto mt-2 max-h-24 leading-relaxed">
+                    {JSON.stringify(action.input, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Best-effort warning re: discarding */}
+        <div className="px-3 py-2 bg-rose-950/20 border border-rose-500/20 rounded-lg flex items-start gap-2 mt-3">
+          <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-gray-500">
+            <strong className="text-rose-300">Discard is best-effort.</strong> Side effects (e.g. written files) may not be fully reversible.
+          </p>
+        </div>
+
+        {/* Error feedback */}
+        {errorMsg && (
+          <div className="px-3 py-2 bg-rose-950/30 border border-rose-500/30 rounded-lg flex items-center gap-2 mt-2">
+            <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+            <p className="text-[10px] text-rose-300 flex-1">{errorMsg}</p>
+            <button onClick={() => setErrorMsg(null)} className="text-rose-500 hover:text-rose-300">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={handleDiscard}
+            disabled={isLoading}
+            className="flex-1 px-3 py-2 bg-black border border-rose-500/30 hover:bg-rose-950/20 text-rose-400 hover:text-rose-300 text-[10px] font-bold font-mono uppercase tracking-wider rounded-lg transition-colors disabled:opacity-50"
+          >
+            {status === 'discarding' ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Discard All'}
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={isLoading}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded-lg transition-all shadow-[0_0_15px_rgba(34,197,94,0.2)] hover:shadow-[0_0_25px_rgba(34,197,94,0.4)]"
+          >
+            {status === 'confirming' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            {status === 'confirming' ? 'Confirming…' : 'Confirm & Commit'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ApprovalCard({ toolCalls, sessionId, onApprove, onReject }: { toolCalls: string, sessionId?: string | null, onApprove: () => void, onReject: () => void }) {
   console.log('[ApprovalCard] Mounting with toolCalls:', toolCalls);
   const queryClient = useQueryClient();
@@ -154,7 +612,7 @@ function ApprovalCard({ toolCalls, sessionId, onApprove, onReject }: { toolCalls
     const rawName: string = call.name || '';
     const bareName = rawName.includes('__') ? rawName.split('__')[1]
       : rawName.includes(':') ? rawName.split(':')[1]
-      : rawName;
+        : rawName;
     const resolution = toolResolutionMap[bareName];
     return { ...call, bareName, resolution };
   }), [calls, toolResolutionMap]);
@@ -306,7 +764,7 @@ function ApprovalCard({ toolCalls, sessionId, onApprove, onReject }: { toolCalls
       )}
       <div className="p-3">
         <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2">
-          Proposed Actions {resolvedCalls.length > 1 && <span className="text-cyan-400 font-bold ml-1">({resolvedCalls.length})</span>} 
+          Proposed Actions {resolvedCalls.length > 1 && <span className="text-cyan-400 font-bold ml-1">({resolvedCalls.length})</span>}
           <span className="text-gray-600 ml-1">(editable)</span>
         </p>
         <div className="space-y-2 mb-3">
@@ -354,6 +812,80 @@ function ApprovalCard({ toolCalls, sessionId, onApprove, onReject }: { toolCalls
   );
 }
 
+// ── Agentic Progress Card ──────────────────────────────────────────────────────────────
+// Live checklist shown while the agent is running — steps check off in real-time.
+function AgenticProgressCard({ goal, plan, stepProgress, currentTool, runStatus }: {
+  goal: string;
+  plan: { id: string; description: string; tool?: string }[];
+  stepProgress: Record<number, 'running' | 'done' | 'error'>;
+  currentTool?: string;
+  runStatus: 'running' | 'done' | 'cancelled';
+}) {
+  const doneCount = Object.values(stepProgress).filter(s => s === 'done').length;
+  const hasError = Object.values(stepProgress).some(s => s === 'error');
+
+  return (
+    <div className="mt-2 bg-zinc-950 border border-violet-500/20 rounded-xl overflow-hidden shadow-xl">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-violet-500/10 flex items-center gap-2.5 bg-violet-950/20">
+        {runStatus === 'running' && <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse shrink-0" />}
+        {runStatus === 'done' && <Check className="w-3.5 h-3.5 text-green-400 shrink-0" />}
+        {runStatus === 'cancelled' && <X className="w-3.5 h-3.5 text-rose-400 shrink-0" />}
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-mono uppercase tracking-wider"
+            style={{ color: runStatus === 'done' ? '#4ade80' : runStatus === 'cancelled' ? '#f87171' : '#a78bfa' }}>
+            {runStatus === 'running' ? 'Agent Running' : runStatus === 'done' ? 'Agent Complete' : 'Agent Cancelled'}
+          </p>
+          <p className="text-sm text-gray-200 mt-0.5 font-medium truncate">{goal}</p>
+        </div>
+        <span className="text-[10px] font-mono text-gray-500 shrink-0">
+          {doneCount}/{plan.length}{hasError ? ' ⚠' : ''}
+        </span>
+      </div>
+
+      {/* Checklist */}
+      <div className="p-3 space-y-1">
+        {plan.map((step, idx) => {
+          const st = stepProgress[idx];
+          return (
+            <div
+              key={step.id}
+              className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all duration-300 ${st === 'running' ? 'bg-violet-950/20 border-violet-500/30' :
+                st === 'done' ? 'bg-black/10 border-transparent opacity-60' :
+                  st === 'error' ? 'bg-rose-950/10 border-rose-500/20' :
+                    'bg-black/20 border-transparent'
+                }`}
+            >
+              {/* Status icon */}
+              <span className="shrink-0 mt-0.5 w-3.5 flex justify-center">
+                {st === 'running' && <Loader2 className="w-3 h-3 text-violet-400 animate-spin" />}
+                {st === 'done' && <Check className="w-3 h-3 text-green-400" />}
+                {st === 'error' && <X className="w-3 h-3 text-rose-400" />}
+                {!st && <span className="w-3 h-3 rounded-full border border-gray-600/50 inline-block" />}
+              </span>
+
+              {/* Step text */}
+              <div className="flex-1 min-w-0">
+                <p className={`text-[12px] leading-relaxed ${st === 'done' ? 'text-gray-600 line-through' :
+                  st === 'running' ? 'text-gray-200' : 'text-gray-400'
+                  }`}>
+                  {step.description}
+                </p>
+                {st === 'running' && (currentTool || step.tool) && (
+                  <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-violet-950/40 border border-violet-500/20 rounded text-[9px] font-mono text-violet-400">
+                    <span className="w-1 h-1 rounded-full bg-violet-400 animate-ping" />
+                    {currentTool || step.tool}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -366,7 +898,11 @@ interface Message {
   // approved  = approved, execution in progress (show success card)
   // executed  = tool ran successfully (show success card)
   // denied    = user denied (show collapsed denied card)
-  status?: 'pending' | 'approved' | 'executed' | 'denied';
+  status?: 'pending' | 'approved' | 'executed' | 'denied' | 'agentic_plan' | 'agentic_running' | 'agentic_done' | 'agentic_cancelled' | string;
+  // ── Agentic run metadata ──────────────────────────────────────────────────────
+  agenticRunId?: string;
+  agenticPlan?: { id: string; description: string; tool?: string; server?: string }[];
+  agenticGoal?: string;
 }
 
 interface Session {
@@ -376,27 +912,6 @@ interface Session {
   mode: 'build' | 'plan';
   messages: Message[];
 }
-
-function hydrateMessage(msg: Message): Message {
-  if (msg.role === 'assistant' && !msg.toolCalls) {
-    const proposalMatch = msg.content?.match(/I proposed executing (.*?):(.*?) \(Waiting for approval\)\.?/);
-    if (proposalMatch) {
-      const serverId = proposalMatch[1];
-      const toolName = proposalMatch[2];
-      return {
-        ...msg,
-        toolCallId: `${serverId}:${toolName}`, // Use name as ID if missing from content
-        toolCalls: JSON.stringify([{ 
-          id: `${serverId}:${toolName}`,
-          name: `${serverId}:${toolName}`, 
-          arguments: { _status: "Hydrated from history" } 
-        }])
-      };
-    }
-  }
-  return msg;
-}
-
 
 // ── Tool Call Summary Types & Utilities ──────────────────────────────────────
 
@@ -583,7 +1098,7 @@ export default function Chat() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId || null);
   const [input, setInput] = useState('');
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -669,6 +1184,29 @@ export default function Chat() {
     setInput('');
   }, [currentSessionId]);
 
+  // ── Stable agentic step-progress store ────────────────────────────────────
+  // Stored in a ref so query cache re-fetches cannot wipe it mid-run.
+  // A parallel counter state triggers re-renders when the ref changes.
+  const agenticProgressRef = useRef<{
+    runId: string;
+    stepProgress: Record<number, 'running' | 'done' | 'error'>;
+    currentTool: string | undefined;
+    // Cached plan metadata so the overlay renders immediately even before the
+    // session re-fetch completes. Populated from the query cache at run start.
+    goal: string;
+    plan: { id: string; description: string; tool?: string }[];
+  } | null>(null);
+  const [agenticProgressTick, setAgenticProgressTick] = useState(0);
+  const bumpProgress = useCallback(() => setAgenticProgressTick(t => t + 1), []);
+
+  // ── Stable checkpoint state ────────────────────────────────────────────────
+  // Completely independent of the query cache — never wiped by a re-fetch.
+  // Set when agentic_final_checkpoint fires, cleared when agentic_done/cancelled.
+  const [activeCheckpoint, setActiveCheckpoint] = useState<{
+    runId: string;
+    pendingActions: { tool: string; server: string; input: Record<string, unknown>; result?: unknown; executedAt: string }[];
+  } | null>(null);
+
   // Listen for new-chat events dispatched from the App sidebar
   useEffect(() => {
     const handler = () => createSessionMutation.mutate();
@@ -682,7 +1220,7 @@ export default function Chat() {
 
   const connectWebSocket = useCallback(() => {
     const ws = new WebSocket(getWsUrl('/ws/chat'));
-    
+
     ws.onopen = () => {
       console.log('WebSocket connected');
       if (currentSessionId) {
@@ -728,44 +1266,6 @@ export default function Chat() {
         case 'message_end': {
           const responseTimeMs = streamStartRef.current > 0 ? Date.now() - streamStartRef.current : 0;
 
-          // ── Stabilized Regex Intercept ───────────────────────────────────
-          const finalContent = streamingContent;
-          const toolCallPattern = /\{[\s\S]*?"name"\s*:\s*"([^"]+)"[\s\S]*?"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/g;
-          const tcMatch = toolCallPattern.exec(finalContent);
-          if (tcMatch) {
-            try {
-              const parsed = JSON.parse(tcMatch[0]);
-              if (parsed.name && parsed.arguments) {
-                const stripped = finalContent.replace(toolCallPattern, '').trim();
-                const syntheticToolCalls = JSON.stringify([{ name: parsed.name, arguments: parsed.arguments, id: `fe-${Date.now()}` }]);
-                queryClient.setQueryData(['session', currentSessionId], (old: any) => {
-                  if (!old) return old;
-                  const newMsg = {
-                    id: `regex-${Date.now()}`,
-                    role: 'assistant' as const,
-                    content: stripped || `I propose executing ${parsed.name}.`,
-                    toolCalls: syntheticToolCalls,
-                  };
-                  return {
-                    ...old,
-                    messages: [...(old.messages || []).map((m: any) => ({...m})), newMsg]
-                  };
-                });
-                dispatch({ type: 'END_STREAM' });
-                streamStartRef.current = 0;
-                streamingStartedRef.current = false;
-                window.dispatchEvent(new CustomEvent('openmacaw:telemetry', {
-                  detail: {
-                    inputTokens: (data as any).usage?.inputTokens || 0,
-                    outputTokens: (data as any).usage?.outputTokens || 0,
-                    responseTimeMs,
-                  }
-                }));
-                break;
-              }
-            } catch { /* not valid JSON, continue normally */ }
-          }
-
           dispatch({ type: 'END_STREAM' });
           streamStartRef.current = 0;
           streamingStartedRef.current = false;
@@ -779,69 +1279,222 @@ export default function Chat() {
           queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
           break;
         }
-          case 'proposal': {
-            console.log('[WS] Received PROPOSAL event:', data);
-            dispatch({ type: 'END_STREAM' });
-            streamingStartedRef.current = false;
+        case 'proposal': {
+          console.log('[WS] Received PROPOSAL event:', data);
+          dispatch({ type: 'END_STREAM' });
+          streamingStartedRef.current = false;
 
-            const newProposalMsg = {
-              id: data.id || `proposal-${Date.now()}`,
-              role: 'assistant' as const,
-              content: `I propose executing ${data.tool}. Please authorize the action.`,
-              toolCallId: data.id,
-              toolCalls: JSON.stringify([{ id: data.id, name: data.tool, arguments: data.input }])
+          const newProposalMsg = {
+            id: data.id || `proposal-${Date.now()}`,
+            role: 'assistant' as const,
+            content: `I propose executing ${data.tool}. Please authorize the action.`,
+            toolCallId: data.id,
+            toolCalls: JSON.stringify([{ id: data.id, name: data.tool, arguments: data.input }])
+          };
+
+          queryClient.setQueryData(['session', currentSessionId], (old: any) => {
+            if (!old) return old;
+            const alreadyExists = (old.messages || []).some((m: any) => m.id === newProposalMsg.id);
+            if (alreadyExists) return old;
+            return {
+              ...old,
+              messages: [...(old.messages || []).map((m: any) => ({ ...m })), newProposalMsg]
             };
+          });
 
-            queryClient.setQueryData(['session', currentSessionId], (old: any) => {
-              if (!old) return old;
-              const alreadyExists = (old.messages || []).some((m: any) => m.id === newProposalMsg.id);
-              if (alreadyExists) return old;
-              return {
-                ...old,
-                messages: [...(old.messages || []).map((m: any) => ({...m})), newProposalMsg]
-              };
-            });
+          window.dispatchEvent(new CustomEvent('openmacaw:inspector', {
+            detail: { type: 'proposal', tool: data.tool, input: data.input, id: data.id }
+          }));
+          break;
+        }
 
-            window.dispatchEvent(new CustomEvent('openmacaw:inspector', {
-              detail: { type: 'proposal', tool: data.tool, input: data.input, id: data.id }
-            }));
-            break;
+        case 'pipeline_stage': {
+          // Map internal stage IDs to user-facing labels.
+          const stageLabels: Record<string, string> = {
+            fetching_tools: 'Checking available tools…',
+            generating: 'Thinking…',
+          };
+          const label = stageLabels[data.stage] ?? data.stage;
+          if (!streamingStartedRef.current) {
+            // Only show pre-flight stages before text has started streaming.
+            dispatch({ type: 'SET_STAGE', label });
           }
+          break;
+        }
 
-          case 'pipeline_stage': {
-            // Map internal stage IDs to user-facing labels.
-            const stageLabels: Record<string, string> = {
-              fetching_tools: 'Checking available tools…',
-              generating: 'Thinking…',
-            };
-            const label = stageLabels[data.stage] ?? data.stage;
-            if (!streamingStartedRef.current) {
-              // Only show pre-flight stages before text has started streaming.
-              dispatch({ type: 'SET_STAGE', label });
-            }
-            break;
-          }
+        case 'error':
+          console.log('[WS] Received Error Event:', data);
+          dispatch({ type: 'SET_ERROR', code: data.code, message: data.message });
+          break;
 
-          case 'error':
-            console.log('[WS] Received Error Event:', data);
-            dispatch({ type: 'SET_ERROR', code: data.code, message: data.message });
-            break;
+        // ── Agentic Run events ──────────────────────────────────────────────
+        case 'agentic_plan_proposed': {
+          // The plan is now saved as a real DB message. Just invalidate so the
+          // session re-fetches and the DB message appears naturally in the list.
+          dispatch({ type: 'END_STREAM' });
+          streamingStartedRef.current = false;
+          queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
+          break;
+        }
 
-          case 'session_renamed': {
-            const renamed = data as { sessionId: string; newTitle: string };
-            queryClient.setQueryData(['sessions'], (old: any) => {
-              if (!Array.isArray(old)) return old;
-              return old.map((s: any) =>
-                s.id === renamed.sessionId ? { ...s, title: renamed.newTitle } : s
+        case 'agentic_running': {
+          const runningData = data as any;
+          const existing = agenticProgressRef.current;
+          const isPhase2 = existing?.runId === runningData.runId;
+
+          // For phase 2 (same runId continuing after checkpoint confirm): keep the
+          // existing step progress so the checklist shows completed phase-1 steps
+          // while phase-2 steps start ticking.  For a fresh run: reset everything.
+          let goal = isPhase2 ? existing!.goal : '';
+          let plan = isPhase2 ? existing!.plan : ([] as { id: string; description: string; tool?: string }[]);
+
+          if (!isPhase2) {
+            // Pull plan/goal from the query cache so the overlay renders immediately,
+            // even before the session re-fetch triggered by approve-plan completes.
+            const cachedSession = queryClient.getQueryData<any>(['session', currentSessionId]);
+            if (cachedSession) {
+              const planMsg = (cachedSession.messages || []).find(
+                (m: any) => m.status?.startsWith('agentic_') && (() => {
+                  try { return JSON.parse(m.content)?.runId === runningData.runId; } catch { return false; }
+                })()
               );
-            });
-            // Also update the individual session cache
-            queryClient.setQueryData(['session', renamed.sessionId], (old: any) => {
-              if (!old) return old;
-              return { ...old, title: renamed.newTitle };
-            });
-            break;
+              if (planMsg) {
+                try {
+                  const meta = JSON.parse(planMsg.content);
+                  goal = meta.goal || '';
+                  plan = meta.plan || [];
+                } catch { /* use empty defaults */ }
+              }
+            }
           }
+
+          agenticProgressRef.current = {
+            runId: runningData.runId,
+            // Phase 2: preserve phase-1 step progress. Fresh run: start empty.
+            stepProgress: isPhase2 ? existing!.stepProgress : {},
+            currentTool: isPhase2 ? existing!.currentTool : undefined,
+            goal,
+            plan,
+          };
+          bumpProgress();
+          // Also update DB message status in the query cache so the thread pill renders.
+          queryClient.setQueryData(['session', currentSessionId], (old: any) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: (old.messages || []).map((m: any) => {
+                if (!m.status?.startsWith('agentic_')) return m;
+                try {
+                  const meta = JSON.parse(m.content);
+                  if (meta.runId !== runningData.runId) return m;
+                  return { ...m, status: 'agentic_running' };
+                } catch { return m; }
+              }),
+            };
+          });
+          break;
+        }
+
+        case 'agentic_step_progress': {
+          const spData = data as any;
+          // Write directly into the stable ref — never touches the query cache.
+          const cur = agenticProgressRef.current;
+          if (cur && cur.runId === spData.runId) {
+            agenticProgressRef.current = {
+              runId: cur.runId,
+              stepProgress: {
+                ...cur.stepProgress,
+                ...(spData.stepIndex >= 0 ? { [spData.stepIndex]: spData.status } : {}),
+              },
+              currentTool: spData.status === 'running' && spData.tool
+                ? spData.tool
+                : cur.currentTool,
+              goal: cur.goal,
+              plan: cur.plan,
+            };
+            bumpProgress();
+          }
+          break;
+        }
+
+
+        case 'agentic_final_checkpoint': {
+          const cpData = data as any;
+          // Store checkpoint in stable state — completely independent of query cache.
+          setActiveCheckpoint({
+            runId: cpData.runId,
+            pendingActions: cpData.pendingActions ?? [],
+          });
+          break;
+        }
+
+        case 'agentic_done': {
+          const doneData = data as any;
+          // Clear the live progress overlay (checklist). The checkpoint card
+          // clears itself after the user acts — don't touch it here.
+          if (agenticProgressRef.current?.runId === doneData.runId) {
+            agenticProgressRef.current = null;
+            bumpProgress();
+          }
+          queryClient.setQueryData(['session', currentSessionId], (old: any) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: (old.messages || []).map((m: any) => {
+                if (!m.status?.startsWith('agentic_')) return m;
+                try {
+                  const meta = JSON.parse(m.content);
+                  if (meta.runId !== doneData.runId) return m;
+                  return { ...m, status: 'agentic_done' };
+                } catch { return m; }
+              }),
+            };
+          });
+          break;
+        }
+
+        case 'agentic_cancelled': {
+          const cancelData = data as any;
+          // Clear the live progress overlay (checklist).
+          if (agenticProgressRef.current?.runId === cancelData.runId) {
+            agenticProgressRef.current = null;
+            bumpProgress();
+          }
+          // Also clear checkpoint if the run was cancelled without user confirmation
+          // (e.g. plan denied, or error mid-run — not from the checkpoint card itself).
+          setActiveCheckpoint(prev => prev?.runId === cancelData.runId ? null : prev);
+          queryClient.setQueryData(['session', currentSessionId], (old: any) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: (old.messages || []).map((m: any) => {
+                if (!m.status?.startsWith('agentic_')) return m;
+                try {
+                  const meta = JSON.parse(m.content);
+                  if (meta.runId !== cancelData.runId) return m;
+                  return { ...m, status: 'agentic_cancelled' };
+                } catch { return m; }
+              }),
+            };
+          });
+          break;
+        }
+
+        case 'session_renamed': {
+          const renamed = data as { sessionId: string; newTitle: string };
+          queryClient.setQueryData(['sessions'], (old: any) => {
+            if (!Array.isArray(old)) return old;
+            return old.map((s: any) =>
+              s.id === renamed.sessionId ? { ...s, title: renamed.newTitle } : s
+            );
+          });
+          // Also update the individual session cache
+          queryClient.setQueryData(['session', renamed.sessionId], (old: any) => {
+            if (!old) return old;
+            return { ...old, title: renamed.newTitle };
+          });
+          break;
+        }
       }
     };
 
@@ -891,9 +1544,13 @@ export default function Chat() {
         // but here we need it IMMEDIATELY for the socket join.
       }
 
-      // Deterministically wait for the socket to be OPEN — no timeout guesses
+      // Deterministically wait for the socket to be OPEN — no timeout guesses.
+      // If the existing socket is not open, close it first (prevents orphaned sockets).
       let ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+          ws.close();
+        }
         ws = connectWebSocket();
         wsRef.current = ws;
       }
@@ -928,9 +1585,13 @@ export default function Chat() {
         sid = newSession.id;
       }
 
-      // Deterministically wait for the socket to be OPEN — no timeout guesses
+      // Deterministically wait for the socket to be OPEN — no timeout guesses.
+      // If the existing socket is not open, close it first (prevents orphaned sockets).
       let ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+          ws.close();
+        }
         ws = connectWebSocket();
         wsRef.current = ws;
       }
@@ -942,7 +1603,7 @@ export default function Chat() {
     }
   };
 
-  const allMessages = (currentSession?.messages || []).map(hydrateMessage);
+  const allMessages = currentSession?.messages || [];
   const displayMessages = [...allMessages];
   // Show the streaming placeholder whenever the agent is active — even before
   // text starts arriving — so the stage / tool pill has somewhere to render.
@@ -952,6 +1613,33 @@ export default function Chat() {
       role: 'assistant',
       content: streamingContent,
     });
+  }
+
+  // ── Active agentic overlay state ───────────────────────────────────────────
+  // `agenticProgressTick` ensures re-renders when the step-progress ref updates.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _tick = agenticProgressTick;
+
+  // Find the agentic_running DB message (used only for plan/goal metadata).
+  const activeAgenticRunMsg = displayMessages.find(
+    m => m.status === 'agentic_running'
+  ) as (Message & { _stepProgress?: Record<number, 'running' | 'done' | 'error'>; _currentTool?: string }) | undefined;
+
+  // Overlay is visible when the agent is running OR a checkpoint is awaiting confirmation.
+  // Both signals are independent of the query cache — no re-fetch can collapse them.
+  const agenticOverlayVisible = !!activeAgenticRunMsg || !!agenticProgressRef.current || !!activeCheckpoint;
+
+  // Step progress comes from the stable ref, not the query cache.
+  const liveProgress = agenticProgressRef.current;
+
+  // Parse plan + goal from the running message's JSON content.
+  // Fall back to the plan cached in the progress ref so the overlay renders
+  // immediately, before the session re-fetch triggered by approve-plan completes.
+  let overlayMeta: { goal: string; plan: { id: string; description: string; tool?: string }[] } = { goal: '', plan: [] };
+  if (activeAgenticRunMsg) {
+    try { overlayMeta = JSON.parse(activeAgenticRunMsg.content || '{}'); } catch { }
+  } else if (liveProgress && (liveProgress.plan.length > 0 || liveProgress.goal)) {
+    overlayMeta = { goal: liveProgress.goal, plan: liveProgress.plan };
   }
 
   // Derive a human-readable label for the active tool call pill.
@@ -974,11 +1662,10 @@ export default function Chat() {
             sessions?.map(session => (
               <div
                 key={session.id}
-                className={`group flex items-center justify-between px-3 py-2 rounded-lg mb-1 cursor-pointer transition-colors ${
-                  currentSessionId === session.id 
-                    ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' 
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
-                }`}
+                className={`group flex items-center justify-between px-3 py-2 rounded-lg mb-1 cursor-pointer transition-colors ${currentSessionId === session.id
+                  ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
+                  }`}
                 onClick={() => setCurrentSessionId(session.id)}
               >
                 <span className="truncate flex-1">{session.title}</span>
@@ -1005,7 +1692,7 @@ export default function Chat() {
             <div className="flex items-center gap-2">
               <span className="font-semibold text-gray-200">{currentSession?.title || 'Chat'}</span>
             </div>
-            <div 
+            <div
               onClick={() => dispatch({ type: 'TOGGLE_GUARDIAN' })}
               className="flex items-center gap-2 cursor-pointer hover:bg-white/5 px-2 py-1 rounded transition-colors group relative"
             >
@@ -1041,17 +1728,17 @@ export default function Chat() {
           </div>
         )}
         <div className="flex-1 overflow-y-auto w-full flex flex-col">
-              {chatError && (
-                <div className="w-full max-w-4xl mx-auto px-4 mt-3">
-                  <div className="flex items-start gap-3 p-3 bg-rose-950/40 border border-rose-500/30 rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.1)]">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    <p className="text-sm text-rose-300 flex-1 leading-relaxed">{chatError.message}</p>
-                    <button onClick={() => dispatch({ type: 'CLEAR_ERROR' })} className="text-rose-500/80 hover:text-rose-300 transition-colors">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
+          {chatError && (
+            <div className="w-full max-w-4xl mx-auto px-4 mt-3">
+              <div className="flex items-start gap-3 p-3 bg-rose-950/40 border border-rose-500/30 rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.1)]">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <p className="text-sm text-rose-300 flex-1 leading-relaxed">{chatError.message}</p>
+                <button onClick={() => dispatch({ type: 'CLEAR_ERROR' })} className="text-rose-500/80 hover:text-rose-300 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {!currentSessionId ? (
             <div className="flex items-center justify-center h-full text-gray-500 font-mono text-sm">
@@ -1108,7 +1795,103 @@ export default function Chat() {
                   (typeof msg.toolCalls === 'object' && Object.keys(msg.toolCalls).length > 0)
                 );
                 const isApprovalCard = msg.role === 'assistant' && hasToolCalls;
-                
+
+                // ── Hide internal agentic system prompts ──────────────────────────────────
+                // The execution prompt injected as a user message must never appear in chat.
+                if (msg.role === 'user' && msg.content?.startsWith('[AGENTIC MODE ACTIVE')) {
+                  return null;
+                }
+                // Also hide the [SYSTEM] confirmation/discard messages after checkpoint
+                if (msg.role === 'user' && msg.content?.startsWith('[SYSTEM]')) {
+                  return null;
+                }
+                // Hide assistant messages that are agentic step-execution outputs.
+                // These contain [STEP_START:N] markers — they are the runtime's intermediate
+                // per-step work saved to the DB.  Only the final summary (no markers) is shown.
+                if (msg.role === 'assistant' && msg.content?.includes('[STEP_START:')) {
+                  return null;
+                }
+
+                // ── Agentic DB-persisted messages (status-driven) ─────────────────────────
+                // These messages come from the DB with status='agentic_*' and JSON content.
+                if (msg.status?.startsWith?.('agentic_')) {
+                  let meta: any = {};
+                  try { meta = JSON.parse(msg.content || '{}'); } catch { }
+                  const plan = meta.plan || [];
+                  const goal = meta.goal || '';
+                  const runId = meta.runId || '';
+                  const stepProgress = (msg as any)._stepProgress || {};
+                  const currentTool = (msg as any)._currentTool;
+
+                  if (msg.status === 'agentic_plan') {
+                    return (
+                      <div key={msg.id} className="w-full my-4">
+                        <div className="w-full max-w-lg">
+                          <AgenticPlanCard
+                            runId={runId}
+                            goal={goal}
+                            plan={plan}
+                            sessionId={currentSessionId}
+                            initialRequireFinal={meta.requireFinalApproval}
+                            initialCompletionGoal={meta.completionGoal}
+                            onAction={() => queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] })}
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (msg.status === 'agentic_running') {
+                    // Full live checklist is shown in the overlay above the input.
+                    // Show a compact pill here so the thread position is preserved.
+                    return (
+                      <div key={msg.id} className="w-full my-4">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-950/30 border border-violet-500/20 rounded-full text-[10px] font-mono text-violet-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shrink-0" />
+                          Agent running — see checklist above input
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (msg.status === 'agentic_done') {
+                    return (
+                      <div key={msg.id} className="w-full my-4">
+                        <div className="w-full max-w-lg">
+                          <AgenticProgressCard
+                            goal={goal}
+                            plan={plan}
+                            stepProgress={stepProgress}
+                            currentTool={undefined}
+                            runStatus="done"
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (msg.status === 'agentic_cancelled') {
+                    return (
+                      <div key={msg.id} className="w-full my-4">
+                        <div className="w-full max-w-lg">
+                          <AgenticProgressCard
+                            goal={goal}
+                            plan={plan}
+                            stepProgress={stepProgress}
+                            currentTool={undefined}
+                            runStatus="cancelled"
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Unrecognised agentic status — don't render anything
+                  return null;
+                }
+
+
+
                 // Hide raw tool results from the chat feed entirely.
                 // The user sees: [User Prompt] -> [ApprovalCard] -> [LLM Summary]
                 if (msg.role === 'tool' || msg.role === 'system') {
@@ -1178,11 +1961,10 @@ export default function Chat() {
                     style={{ textAlign: msg.role === 'user' ? 'right' : 'left' }}
                   >
                     <div
-                      className={`inline-block max-w-[85%] px-3 py-2 rounded-md text-left ${
-                        msg.role === 'user'
-                          ? 'bg-zinc-800 text-gray-200 border border-white/5'
-                          : 'bg-transparent text-gray-300'
-                      }`}
+                      className={`inline-block max-w-[85%] px-3 py-2 rounded-md text-left ${msg.role === 'user'
+                        ? 'bg-zinc-800 text-gray-200 border border-white/5'
+                        : 'bg-transparent text-gray-300'
+                        }`}
                     >
                       {msg.role === 'user' ? (
                         <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
@@ -1217,8 +1999,13 @@ export default function Chat() {
                               }
                             }
                           } catch { /* not JSON, use as-is */ }
-                          // Strip residual JSON tool-call blobs from the displayed content
+                          // Strip residual JSON tool-call blobs and agentic step markers.
                           cleaned = cleaned.replace(/\{[\s\S]*?"name"\s*:\s*".*?"[\s\S]*?"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/g, '').trim();
+                          cleaned = cleaned
+                            .replace(/\[STEP_START:\d+\]\n?/g, '')
+                            .replace(/\[STEP_DONE:\d+\]\n?/g, '')
+                            .replace(/\[AGENTIC_GOAL_REACHED:[^\]]+\]\n?/g, '')
+                            .trim();
                           if (!cleaned && !(isStreamingMsg && (toolPillTool || activeStage)) && toolsForHeader.length === 0) return null;
                           return (
                             <>
@@ -1259,11 +2046,45 @@ export default function Chat() {
           )}
         </div>
 
+        {/* ── Agentic Live Overlay (above input) ─────────────────────────────── */}
+        {agenticOverlayVisible && (
+          <div className="w-full border-t border-violet-500/20 bg-zinc-950/80 backdrop-blur-sm">
+            <div className="w-full max-w-4xl mx-auto px-4 py-3">
+              {/* Final checkpoint takes priority over the running checklist */}
+              {activeCheckpoint ? (
+                <AgenticFinalCheckpointCard
+                  runId={activeCheckpoint.runId}
+                  pendingActions={activeCheckpoint.pendingActions}
+                  onDismiss={() => {
+                    setActiveCheckpoint(null);
+                    queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
+                  }}
+                />
+              ) : liveProgress ? (
+                <AgenticProgressCard
+                  goal={overlayMeta.goal}
+                  plan={overlayMeta.plan}
+                  stepProgress={liveProgress.stepProgress}
+                  currentTool={liveProgress.currentTool}
+                  runStatus="running"
+                />
+              ) : null}
+            </div>
+          </div>
+        )}
+
         <ChatInput
           value={input}
           onChange={(v) => setInput(typeof v === 'function' ? v(input) : v)}
-          onSend={() => {
-            handleSend();
+          onSend={() => { handleSend(); }}
+          onStop={async () => {
+            if (!currentSessionId) return;
+            try {
+              await apiFetch(`/api/sessions/${currentSessionId}/stop`, { method: 'POST' });
+            } catch { /* ignore — stream may have already finished */ }
+            dispatch({ type: 'END_STREAM' });
+            streamingStartedRef.current = false;
+            queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
           }}
           isStreaming={isStreaming}
           sessionId={currentSessionId}

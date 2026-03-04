@@ -9,7 +9,14 @@ export type AgentEvent =
   | { type: 'error'; message: string; code?: string }
   | { type: 'step_count'; count: number }
   | { type: 'session_renamed'; sessionId: string; newTitle: string }
-  | { type: 'pipeline_stage'; stage: string };
+  | { type: 'pipeline_stage'; stage: string }
+  // ── Agentic Run lifecycle events ──────────────────────────────────────────
+  | { type: 'agentic_plan_proposed'; runId: string; goal: string; plan: { id: string; description: string; tool?: string; server?: string }[]; requireFinalApproval?: boolean; completionGoal?: string }
+  | { type: 'agentic_running'; runId: string }
+  | { type: 'agentic_step_progress'; runId: string; stepIndex: number; tool: string; status: 'running' | 'done' | 'error' }
+  | { type: 'agentic_final_checkpoint'; runId: string; pendingActions: { tool: string; server: string; input: Record<string, unknown>; result?: unknown; executedAt: string }[] }
+  | { type: 'agentic_done'; runId: string }
+  | { type: 'agentic_cancelled'; runId: string; reason?: string };
 
 export async function apiFetch(endpoint: string, options?: RequestInit) {
   // Ensure endpoint starts with a slash
@@ -19,7 +26,7 @@ export async function apiFetch(endpoint: string, options?: RequestInit) {
 
 export function getWsUrl(endpoint: string) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  
+
   if (import.meta.env.VITE_API_URL) {
     const url = new URL(import.meta.env.VITE_API_URL);
     return `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;

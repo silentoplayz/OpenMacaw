@@ -22,6 +22,7 @@ import {
   registryRoutes,
   pipelinesRoutes,
   modelCheckRoutes,
+  agenticRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -47,6 +48,7 @@ async function buildApp() {
   await fastify.register(registryRoutes);
   await fastify.register(pipelinesRoutes);
   await fastify.register(modelCheckRoutes);
+  await fastify.register(agenticRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');
