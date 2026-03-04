@@ -71,6 +71,8 @@ export const sessions = sqliteTable('sessions', {
   model: text('model').notNull(),
   systemPrompt: text('system_prompt'),
   mode: text('mode').notNull().default('build'),
+  isPinned: integer('is_pinned').notNull().default(0),
+  folderId: text('folder_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

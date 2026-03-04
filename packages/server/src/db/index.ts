@@ -137,6 +137,8 @@ const SCHEMA_SQL = `
     model TEXT NOT NULL,
     system_prompt TEXT,
     mode TEXT NOT NULL DEFAULT 'build',
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    folder_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -316,6 +318,14 @@ export function initDatabase(): void {
   // ── Phase 64: Last Active tracking ──────────────────────────────────────
   try {
     sqlite.exec("ALTER TABLE users ADD COLUMN last_active INTEGER");
+  } catch (e) { /* column already exists */ }
+
+  // ── Phase 68: Sidebar & Context Menu Migration ─────────────────────────────
+  try {
+    sqlite.exec("ALTER TABLE sessions ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0");
+  } catch (e) { /* column already exists */ }
+  try {
+    sqlite.exec("ALTER TABLE sessions ADD COLUMN folder_id TEXT");
   } catch (e) { /* column already exists */ }
 
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });

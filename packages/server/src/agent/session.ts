@@ -10,6 +10,8 @@ export interface SessionData {
   /** Operator-supplied personality/style text appended to the base system prompt. */
   personality?: string;
   mode: 'build' | 'plan';
+  isPinned: boolean;
+  folderId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +56,8 @@ export function createSession(data: {
     model: dbSession.model,
     personality: dbSession.systemPrompt || undefined,
     mode: dbSession.mode,
+    isPinned: false,
+    folderId: null,
     createdAt: new Date(now),
     updatedAt: new Date(now),
   };
@@ -78,6 +82,8 @@ export function getSession(id: string, userId?: string): SessionData | null {
     model: session.model,
     personality: session.systemPrompt || undefined,
     mode: session.mode as 'build' | 'plan',
+    isPinned: !!session.isPinned,
+    folderId: session.folderId || null,
     createdAt: new Date(session.createdAt),
     updatedAt: new Date(session.updatedAt),
   };
@@ -94,6 +100,8 @@ export function listSessions(userId: string): SessionData[] {
     model: session.model,
     personality: session.systemPrompt || undefined,
     mode: session.mode as 'build' | 'plan',
+    isPinned: !!session.isPinned,
+    folderId: session.folderId || null,
     createdAt: new Date(session.createdAt),
     updatedAt: new Date(session.updatedAt),
   }));
@@ -105,6 +113,8 @@ export function updateSession(id: string, userId: string | undefined, updates: P
   /** Personality text to store for this session. Appended to base system prompt at runtime. */
   personality: string;
   mode: 'build' | 'plan';
+  isPinned: boolean;
+  folderId: string | null;
 }>): SessionData | null {
   const db = getDb();
   const dbUpdates: Record<string, unknown> = { updatedAt: Date.now() };
@@ -114,6 +124,8 @@ export function updateSession(id: string, userId: string | undefined, updates: P
   // Map personality → systemPrompt column in the DB
   if (updates.personality !== undefined) dbUpdates.systemPrompt = updates.personality;
   if (updates.mode !== undefined) dbUpdates.mode = updates.mode;
+  if (updates.isPinned !== undefined) dbUpdates.isPinned = updates.isPinned ? 1 : 0;
+  if (updates.folderId !== undefined) dbUpdates.folderId = updates.folderId;
 
   if (userId) {
     db.update(schema.sessions as any).set(dbUpdates).where((getCol: (col: string) => any) => getCol('id') === id && getCol('userId') === userId);

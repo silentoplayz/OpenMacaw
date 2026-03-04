@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
-  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert, CheckCircle2, Circle, Crosshair, Target
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert, CheckCircle2, Circle, Crosshair, Target,
+  MoreHorizontal, Pin, Download, Edit2, FolderClosed, FolderOpen, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -269,6 +271,72 @@ function App() {
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
 
+  // Sidebar grouping & layout state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem('openmacaw:sidebar-open');
+      if (saved) return JSON.parse(saved);
+    } catch { }
+    return true;
+  });
+
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('openmacaw:sidebar-folders');
+      if (saved) return JSON.parse(saved);
+    } catch { }
+    return {};
+  });
+
+  // Context Menu State
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close context menu on outside click or scroll
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && menuRef.current.contains(event.target as Node)) {
+        return;
+      }
+      const target = event.target as HTMLElement;
+      if (target.closest('.sidebar-context-btn')) {
+        return;
+      }
+      setActiveMenuId(null);
+    }
+    
+    function handleScroll() {
+      setActiveMenuId(null);
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('scroll', handleScroll, true); // capture phase to catch internal scrollable divs
+    
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, []);
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((prev: boolean) => {
+      const next = !prev;
+      localStorage.setItem('openmacaw:sidebar-open', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const toggleFolder = (folderName: string) => {
+    setCollapsedFolders(prev => {
+      const next = { ...prev, [folderName]: !prev[folderName] };
+      localStorage.setItem('openmacaw:sidebar-folders', JSON.stringify(next));
+      return next;
+    });
+  };
+
   // Inspector state
   const [sessionInfo, setSessionInfo] = useState<{ model: string; sessionId: string } | null>(null);
   const [telemetry, setTelemetry] = useState<{ inputTokens: number; outputTokens: number; responseTimeMs: number } | null>(null);
@@ -411,7 +479,7 @@ function App() {
     }
   });
 
-  const { data: chatSessions } = useQuery<{ id: string; title: string }[]>({
+  const { data: chatSessions } = useQuery<{ id: string; title: string; isPinned: boolean; createdAt: string }[]>({
     queryKey: ['sessions'],
     queryFn: async () => {
       const res = await apiFetch('/api/sessions');
@@ -426,8 +494,80 @@ function App() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      setActiveMenuId(null);
     },
   });
+
+  const updateSessionMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: string, updates: any }) => {
+      await apiFetch(`/api/sessions/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      setActiveMenuId(null);
+      setRenamingId(null);
+    },
+  });
+
+  const handleDownloadSession = async (id: string, title: string) => {
+    try {
+      const res = await apiFetch(`/api/sessions/${id}`);
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chat-${title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setActiveMenuId(null);
+    } catch (e) {
+      console.error('Download failed', e);
+    }
+  };
+
+  const groupSessions = (sessions: { id: string; title: string; isPinned: boolean; createdAt: string }[]) => {
+    const groups: Record<string, typeof sessions> = {
+      Pinned: [],
+      Today: [],
+      Yesterday: [],
+      'Previous 7 Days': [],
+      Older: []
+    };
+    
+    if (!sessions) return groups;
+
+    const now = new Date();
+    // Reset to start of day for accurate bucket comparison
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterday = today - 86400000;
+    const lastWeek = today - (86400000 * 7);
+
+    // Sort descending by creation date
+    const sorted = [...sessions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    sorted.forEach(s => {
+      if (s.isPinned) {
+        groups['Pinned'].push(s);
+        return;
+      }
+      const t = new Date(s.createdAt).getTime();
+      if (t >= today) groups['Today'].push(s);
+      else if (t >= yesterday) groups['Yesterday'].push(s);
+      else if (t >= lastWeek) groups['Previous 7 Days'].push(s);
+      else groups['Older'].push(s);
+    });
+
+    return groups;
+  };
+
+  const groupedSessions = groupSessions(chatSessions || []);
 
   // Extract the active session id from the URL (e.g. /chat/SESSION_ID).
   const activeChatId = location.pathname.match(/^\/chat\/(.+)/)?.[1] ?? null;
@@ -462,19 +602,29 @@ function App() {
 
         {/* ── Left sidebar — always visible on desktop, overlay on mobile ── */}
         <aside className={[
-          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40 w-56',
-          'transition-transform duration-200 ease-in-out',
+          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40',
+          'transition-all duration-300 ease-in-out',
           // Mobile: fixed overlay, slides in/out
-          'fixed inset-y-0 left-0 shadow-2xl',
+          'fixed inset-y-0 left-0 shadow-2xl w-56',
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop: in flex flow, always visible
-          'lg:relative lg:translate-x-0 lg:shadow-none',
+          // Desktop: in flex flow
+          'lg:relative lg:shadow-none',
+          isSidebarOpen ? 'lg:translate-x-0 lg:w-56 opacity-100' : 'lg:-translate-x-full lg:w-0 opacity-0 overflow-hidden'
         ].join(' ')}>
 
-          {/* Logo */}
-          <div className="h-12 flex items-center px-4 border-b border-white/5 gap-2 shrink-0">
-            <Shield className="w-4 h-4 text-cyan-500" />
-            <span className="font-bold text-white text-sm">OpenMacaw</span>
+          {/* Logo & Toggle */}
+          <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 shrink-0 whitespace-nowrap">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-cyan-500" />
+              <span className="font-bold text-white text-sm">OpenMacaw</span>
+            </div>
+            <button
+              onClick={toggleSidebar}
+              className="hidden lg:flex p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+              title="Close Sidebar"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Nav items — Chat item expands to show sessions when active */}
@@ -495,41 +645,138 @@ function App() {
                     <span className="font-medium">{item.label}</span>
                   </Link>
 
-                  {/* Chat sessions submenu — shown when Chat is the active section */}
-                  {isChat && chatActive && chatSessions && chatSessions.length > 0 && (
-                    <div className="mt-0.5 max-h-44 overflow-y-auto space-y-0.5">
-                      {chatSessions.map(session => (
-                        <div
-                          key={session.id}
-                          className={`group flex items-center gap-1 pl-7 pr-1 py-1 rounded-md text-xs transition-colors ${
-                            activeChatId === session.id
-                              ? 'text-cyan-400 bg-cyan-500/10'
-                              : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
-                          }`}
-                        >
-                          <Link
-                            to={`/chat/${session.id}`}
-                            onClick={() => setMobileNavOpen(false)}
-                            className="flex-1 truncate min-w-0"
-                            title={session.title}
-                          >
-                            {session.title}
-                          </Link>
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (confirm('Delete this conversation?')) {
-                                deleteSessionMutation.mutate(session.id);
-                              }
-                            }}
-                            title="Delete conversation"
-                            className="shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:text-rose-400 transition-all"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                  {/* Chat sessions submenu — grouped workspaces */}
+                  {isChat && chatActive && (
+                    <div className="mt-1 overflow-y-auto space-y-1 pb-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                      {chatSessions && chatSessions.length === 0 ? (
+                        <div className="px-4 py-3 text-center">
+                          <p className="text-xs text-gray-500 italic">No conversations yet.</p>
                         </div>
-                      ))}
+                      ) : (
+                        Object.entries(groupedSessions).map(([groupName, groupSessions]) => {
+                          if (groupSessions.length === 0) return null;
+                          const isCollapsed = collapsedFolders[groupName];
+
+                          return (
+                            <div key={groupName} className="mb-2">
+                              {/* Folder Header */}
+                              <div
+                                onClick={() => toggleFolder(groupName)}
+                                className="group flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-white/[0.02] rounded-md transition-colors"
+                              >
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-3 h-3 text-gray-500 group-hover:text-gray-400" />
+                                ) : (
+                                  <ChevronDown className="w-3 h-3 text-gray-500 group-hover:text-gray-400" />
+                                )}
+                                <span className="text-[10px] font-mono tracking-wider font-bold uppercase text-gray-500 group-hover:text-gray-300">
+                                  {groupName}
+                                </span>
+                              </div>
+
+                              {/* Folder Contents */}
+                              <AnimatePresence initial={false}>
+                                {!isCollapsed && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="space-y-0.5 mt-0.5 ml-2 border-l border-white/5 pl-1.5">
+                                      {groupSessions.map(session => {
+                                        const isActive = activeChatId === session.id;
+                                        const isRenaming = renamingId === session.id;
+
+                                        return (
+                                          <div
+                                            key={session.id}
+                                            className={`relative group flex items-center gap-1 pl-2 pr-1 py-1 rounded-md text-xs transition-colors ${isActive
+                                              ? 'bg-cyan-500/10 text-cyan-400'
+                                              : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                                              }`}
+                                          >
+                                            {session.isPinned && groupName !== 'Pinned' && (
+                                              <Pin className="w-3 h-3 shrink-0 text-cyan-500" />
+                                            )}
+
+                                            {isRenaming ? (
+                                              <input
+                                                autoFocus
+                                                type="text"
+                                                value={renameValue}
+                                                onChange={e => setRenameValue(e.target.value)}
+                                                onBlur={() => {
+                                                  // setTimeout prevents aggressive Firefox blur from dismissing immediately during click events
+                                                  setTimeout(() => {
+                                                    if (renameValue.trim() && renameValue !== session.title) {
+                                                      updateSessionMutation.mutate({ id: session.id, updates: { title: renameValue } });
+                                                    } else {
+                                                      setRenamingId(null);
+                                                    }
+                                                  }, 100);
+                                                }}
+                                                onKeyDown={e => {
+                                                  if (e.key === 'Enter') {
+                                                    if (renameValue.trim() && renameValue !== session.title) {
+                                                      updateSessionMutation.mutate({ id: session.id, updates: { title: renameValue } });
+                                                    } else {
+                                                      setRenamingId(null);
+                                                    }
+                                                  } else if (e.key === 'Escape') {
+                                                    setRenamingId(null);
+                                                  }
+                                                }}
+                                                className="flex-1 min-w-0 bg-black border border-cyan-500/50 rounded px-1 text-cyan-400 outline-none"
+                                              />
+                                            ) : (
+                                              <Link
+                                                to={`/chat/${session.id}`}
+                                                onClick={() => setMobileNavOpen(false)}
+                                                className="flex-1 truncate min-w-0 py-0.5"
+                                                title={session.title}
+                                              >
+                                                {session.title}
+                                              </Link>
+                                            )}
+
+                                            {/* Context Menu Button */}
+                                            {!isRenaming && (
+                                              <div className="relative shrink-0">
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    if (activeMenuId === session.id) {
+                                                      setActiveMenuId(null);
+                                                    } else {
+                                                      const rect = e.currentTarget.getBoundingClientRect();
+                                                      setMenuPosition({
+                                                        top: rect.bottom + window.scrollY + 4,
+                                                        left: rect.right + window.scrollX - 144 // approx width of 36 (144px)
+                                                      });
+                                                      setActiveMenuId(session.id);
+                                                    }
+                                                  }}
+                                                  className={`sidebar-context-btn p-1 rounded transition-all ${activeMenuId === session.id ? 'opacity-100 text-white bg-white/10' : 'opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                  <MoreHorizontal className="w-3.5 h-3.5 flex-shrink-0" />
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   )}
                 </div>
@@ -659,7 +906,17 @@ function App() {
         </aside>
 
         {/* ── Middle Pane ── */}
-        <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 lg:pt-0">
+        <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 lg:pt-0 delay-150 duration-300 transition-all">
+          {/* Floating toggle button when sidebar is collapsed */}
+          {!isSidebarOpen && (
+            <button
+              onClick={toggleSidebar}
+              className="hidden lg:flex absolute top-3 left-3 z-50 p-2 rounded-md bg-zinc-900 border border-white/10 text-gray-400 hover:text-white hover:bg-zinc-800 shadow-lg transition-colors animate-in fade-in"
+              title="Open Sidebar"
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
+          )}
           <Outlet />
         </main>
 
@@ -1031,6 +1288,77 @@ function App() {
           </>
         )}
       </AnimatePresence>
+
+      {/* ── Context Menu Portal ── */}
+      {activeMenuId && menuPosition && (
+        createPortal(
+          (() => {
+            const session = chatSessions?.find(s => s.id === activeMenuId);
+            if (!session) return null;
+            
+            return (
+              <div
+                ref={menuRef}
+                style={{ top: menuPosition.top, left: menuPosition.left }}
+                className="absolute w-36 bg-zinc-900 border border-white/10 rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+              >
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    updateSessionMutation.mutate({ id: session.id, updates: { isPinned: !session.isPinned } });
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5 hover:text-white"
+                >
+                  <Pin className="w-3 h-3" />
+                  {session.isPinned ? 'Unpin' : 'Pin to top'}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setRenameValue(session.title);
+                    setRenamingId(session.id);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5 hover:text-white"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  Rename
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDownloadSession(session.id, session.title);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5 hover:text-white"
+                >
+                  <Download className="w-3 h-3" />
+                  Download JSON
+                </button>
+                <div className="my-1 border-t border-white/5" />
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (confirm('Delete this conversation? This cannot be undone.')) {
+                      deleteSessionMutation.mutate(session.id);
+                    } else {
+                      setActiveMenuId(null);
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              </div>
+            );
+          })(),
+          document.body
+        )
+      )}
     </>
   );
 }

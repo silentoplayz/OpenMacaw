@@ -8,6 +8,8 @@ const createSessionSchema = z.object({
   model: z.string().optional(),
   personality: z.string().optional(),
   mode: z.enum(['build', 'plan']).optional(),
+  isPinned: z.boolean().optional(),
+  folderId: z.string().nullable().optional(),
 });
 
 export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
