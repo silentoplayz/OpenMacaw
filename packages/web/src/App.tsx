@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Shield,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun,
-  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert
+  ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert, CheckCircle2, Circle, Crosshair, Target
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -277,6 +277,17 @@ function App() {
   >([]);
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
 
+  // Pipeline Mission Control state
+  const [pipelineState, setPipelineState] = useState<{
+    status: 'running' | 'done' | 'cancelled';
+    runId: string;
+    goal: string;
+    plan: { id: string; description: string; tool?: string }[];
+    stepProgress: Record<number, string>;
+    currentTool?: string;
+  } | null>(null);
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
+
   const haltMutation = useMutation({
     mutationFn: async () => {
       await apiFetch('/api/mcp/halt', { method: 'POST' });
@@ -356,9 +367,19 @@ function App() {
       ].slice(-30));
     };
 
+    const handlePipeline = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setPipelineState(detail);
+      // Auto-clear after done/cancelled with a short delay for visual feedback
+      if (detail.status === 'done' || detail.status === 'cancelled') {
+        setTimeout(() => setPipelineState(null), 8000);
+      }
+    };
+
     window.addEventListener('openmacaw:session_info', handleSessionInfo);
     window.addEventListener('openmacaw:telemetry', handleTelemetry);
     window.addEventListener('openmacaw:inspector', handleInspector);
+    window.addEventListener('openmacaw:pipeline', handlePipeline);
 
     return () => {
       window.removeEventListener('openmacaw:executing', handleExecution);
@@ -366,6 +387,7 @@ function App() {
       window.removeEventListener('openmacaw:session_info', handleSessionInfo);
       window.removeEventListener('openmacaw:telemetry', handleTelemetry);
       window.removeEventListener('openmacaw:inspector', handleInspector);
+      window.removeEventListener('openmacaw:pipeline', handlePipeline);
     };
   }, []);
 
@@ -645,8 +667,25 @@ function App() {
         <aside className="w-80 hidden lg:flex flex-col bg-zinc-950 border-l border-white/5 shrink-0 z-10">
           {/* Inspector Header */}
           <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-black">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">Inspector</span>
-            <Activity className="w-3.5 h-3.5 text-gray-500" />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
+                {pipelineState ? 'Mission Control' : 'Inspector'}
+              </span>
+              {pipelineState?.status === 'running' && (
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="text-[9px] font-mono text-cyan-400 animate-pulse">LIVE</span>
+                </span>
+              )}
+            </div>
+            {pipelineState ? (
+              <Target className={`w-3.5 h-3.5 ${
+                pipelineState.status === 'running' ? 'text-cyan-400 animate-spin' :
+                pipelineState.status === 'done' ? 'text-green-400' : 'text-rose-400'
+              }`} />
+            ) : (
+              <Activity className="w-3.5 h-3.5 text-gray-500" />
+            )}
           </div>
 
           {/* Top Section: Active Session State */}
@@ -676,60 +715,276 @@ function App() {
             </div>
           </div>
 
-          {/* Middle Section: Live Event Stream */}
+          {/* Middle Section: Pipeline Roadmap OR Live Event Stream */}
           <div
             ref={inspectorRef}
-            className="flex-1 p-3 font-mono text-[11px] text-gray-500 overflow-y-auto space-y-1.5 selection:bg-cyan-900/40"
+            className="flex-1 overflow-y-auto selection:bg-cyan-900/40"
           >
-            {executionLogs.length === 0 && inspectorEntries.length === 0 ? (
-              <>
-                <div className="flex gap-2">
-                  <span className="text-gray-600">[{new Date().toISOString().split('T')[1].split('.')[0]}]</span>
-                  <span className="text-cyan-700">SYSTEM_INIT</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-gray-600">[{new Date().toISOString().split('T')[1].split('.')[0]}]</span>
-                  <span className="text-gray-400">Waiting for agent activity...</span>
-                </div>
-              </>
-            ) : (
-              <>
-                {executionLogs.map(log => (
-                  <div key={log.id} className="flex gap-2 leading-relaxed">
-                    <span className="text-gray-600 shrink-0">[{log.time}]</span>
-                    <span className={`${log.type === 'success' ? 'text-green-500' :
-                        log.type === 'error' ? 'text-red-500' :
-                          'text-cyan-400 animate-pulse'
-                      }`}>{log.message}</span>
+            <AnimatePresence mode="wait">
+              {pipelineState ? (
+                /* ── Mission Control: Pipeline Roadmap ── */
+                <motion.div
+                  key="pipeline-roadmap"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  transition={{ duration: 0.3 }}
+                  className="p-3 space-y-3"
+                >
+                  {/* Goal Header */}
+                  <div className={`rounded-lg p-3 border ${
+                    pipelineState.status === 'running'
+                      ? 'bg-violet-950/30 border-violet-500/20'
+                      : pipelineState.status === 'done'
+                        ? 'bg-green-950/30 border-green-500/20'
+                        : 'bg-rose-950/30 border-rose-500/20'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Crosshair className={`w-3.5 h-3.5 ${
+                        pipelineState.status === 'running' ? 'text-violet-400' :
+                        pipelineState.status === 'done' ? 'text-green-400' : 'text-rose-400'
+                      }`} />
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-gray-500">
+                        {pipelineState.status === 'running' ? 'Active Goal' :
+                         pipelineState.status === 'done' ? 'Completed' : 'Cancelled'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-300 leading-relaxed line-clamp-3">
+                      {pipelineState.goal || 'Autonomous pipeline'}
+                    </p>
                   </div>
-                ))}
-                {inspectorEntries.map(entry => (
-                  <div key={entry.id} className="border border-white/5 rounded bg-black/30">
-                    <button
-                      onClick={() => setExpandedEntries(prev => {
-                        const next = new Set(prev);
-                        next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
-                        return next;
-                      })}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
+
+                  {/* Step Roadmap */}
+                  <div className="space-y-0.5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[9px] font-mono uppercase tracking-widest text-gray-600">Pipeline Roadmap</span>
+                      <span className="text-[9px] font-mono text-gray-600">
+                        {Object.values(pipelineState.stepProgress).filter(s => s === 'done').length}/{pipelineState.plan.length}
+                      </span>
+                    </div>
+
+                    {pipelineState.plan.map((step, idx) => {
+                      const status = pipelineState.stepProgress[idx] || 'pending';
+                      const isActive = status === 'running';
+                      const isDone = status === 'done';
+                      const isError = status === 'error';
+                      const isExpanded = expandedSteps.has(idx);
+
+                      return (
+                        <motion.div
+                          key={step.id || idx}
+                          layout
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.2, delay: idx * 0.05 }}
+                        >
+                          <button
+                            onClick={() => {
+                              if (isDone || isError) {
+                                setExpandedSteps(prev => {
+                                  const next = new Set(prev);
+                                  next.has(idx) ? next.delete(idx) : next.add(idx);
+                                  return next;
+                                });
+                              }
+                            }}
+                            className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg text-left transition-all duration-300 ${
+                              isActive
+                                ? 'bg-cyan-950/30 border border-cyan-500/20'
+                                : isDone
+                                  ? 'bg-white/[0.02] border border-transparent hover:bg-white/[0.04] cursor-pointer'
+                                  : isError
+                                    ? 'bg-rose-950/20 border border-rose-500/10 hover:bg-rose-950/30 cursor-pointer'
+                                    : 'bg-transparent border border-transparent opacity-50'
+                            }`}
+                          >
+                            {/* Status Icon with AnimatePresence */}
+                            <div className="w-4 h-4 mt-0.5 shrink-0 flex items-center justify-center">
+                              <AnimatePresence mode="wait">
+                                {isDone ? (
+                                  <motion.div
+                                    key={`done-${idx}`}
+                                    initial={{ scale: 0, rotate: -90 }}
+                                    animate={{ scale: 1, rotate: 0 }}
+                                    transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+                                  >
+                                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                  </motion.div>
+                                ) : isActive ? (
+                                  <motion.div
+                                    key={`active-${idx}`}
+                                    initial={{ scale: 0 }}
+                                    animate={{ scale: 1 }}
+                                    className="relative"
+                                  >
+                                    <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+                                  </motion.div>
+                                ) : isError ? (
+                                  <motion.div
+                                    key={`error-${idx}`}
+                                    initial={{ scale: 0 }}
+                                    animate={{ scale: 1 }}
+                                  >
+                                    <X className="w-4 h-4 text-rose-400" />
+                                  </motion.div>
+                                ) : (
+                                  <Circle className="w-3.5 h-3.5 text-gray-700" />
+                                )}
+                              </AnimatePresence>
+                            </div>
+
+                            {/* Step Content */}
+                            <div className="flex-1 min-w-0">
+                              <span className={`text-[11px] leading-relaxed font-mono transition-colors duration-500 ${
+                                isActive ? 'text-cyan-400' :
+                                isDone ? 'text-zinc-500' :
+                                isError ? 'text-rose-400' :
+                                'text-gray-600'
+                              }`}>
+                                {step.description}
+                              </span>
+
+                              {/* Active step: show current tool badge */}
+                              {isActive && pipelineState.currentTool && (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="mt-1 flex items-center gap-1"
+                                >
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950/50 text-cyan-500 font-mono border border-cyan-500/20">
+                                    {pipelineState.currentTool.includes('__')
+                                      ? pipelineState.currentTool.split('__')[1]
+                                      : pipelineState.currentTool}
+                                  </span>
+                                </motion.div>
+                              )}
+
+                              {/* Expanded detail for completed/error steps */}
+                              <AnimatePresence>
+                                {isExpanded && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
+                                      {step.tool && (
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-gray-600 font-mono">Tool:</span>
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-950/50 text-violet-400 font-mono border border-violet-500/20">
+                                            {step.tool}
+                                          </span>
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9px] text-gray-600 font-mono">Status:</span>
+                                        <span className={`text-[9px] font-mono ${
+                                          isDone ? 'text-green-500' : 'text-rose-400'
+                                        }`}>
+                                          {isDone ? 'Completed ✓' : 'Failed ✗'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+
+                            {/* Step number */}
+                            <span className={`text-[9px] font-mono shrink-0 mt-0.5 ${
+                              isActive ? 'text-cyan-500' :
+                              isDone ? 'text-zinc-600' : 'text-gray-700'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                          </button>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Pipeline Status Footer */}
+                  {pipelineState.status !== 'running' && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className={`flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-mono uppercase tracking-wider ${
+                        pipelineState.status === 'done'
+                          ? 'bg-green-950/20 text-green-500 border border-green-500/10'
+                          : 'bg-rose-950/20 text-rose-500 border border-rose-500/10'
+                      }`}
                     >
-                      {expandedEntries.has(entry.id) ? (
-                        <ChevronUp className="w-3 h-3 text-gray-600 shrink-0" />
+                      {pipelineState.status === 'done' ? (
+                        <><CheckCircle2 className="w-3 h-3" /> Pipeline Complete</>
                       ) : (
-                        <ChevronDown className="w-3 h-3 text-gray-600 shrink-0" />
+                        <><X className="w-3 h-3" /> Pipeline Cancelled</>
                       )}
-                      <span className="text-gray-600 shrink-0">[{entry.time}]</span>
-                      <span className="text-amber-400 truncate">{entry.message}</span>
-                    </button>
-                    {expandedEntries.has(entry.id) && entry.jsonPayload && (
-                      <pre className="px-3 py-2 text-[10px] text-gray-400 border-t border-white/5 overflow-x-auto bg-black/50 max-h-40 overflow-y-auto">
-                        {JSON.stringify(entry.jsonPayload, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                ))}
-              </>
-            )}
+                    </motion.div>
+                  )}
+                </motion.div>
+              ) : (
+                /* ── Default: Generic Log View ── */
+                <motion.div
+                  key="log-view"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="p-3 font-mono text-[11px] text-gray-500 space-y-1.5"
+                >
+                  {executionLogs.length === 0 && inspectorEntries.length === 0 ? (
+                    <>
+                      <div className="flex gap-2">
+                        <span className="text-gray-600">[{new Date().toISOString().split('T')[1].split('.')[0]}]</span>
+                        <span className="text-cyan-700">SYSTEM_INIT</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="text-gray-600">[{new Date().toISOString().split('T')[1].split('.')[0]}]</span>
+                        <span className="text-gray-400">Waiting for agent activity...</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {executionLogs.map(log => (
+                        <div key={log.id} className="flex gap-2 leading-relaxed">
+                          <span className="text-gray-600 shrink-0">[{log.time}]</span>
+                          <span className={`${log.type === 'success' ? 'text-green-500' :
+                              log.type === 'error' ? 'text-red-500' :
+                                'text-cyan-400 animate-pulse'
+                            }`}>{log.message}</span>
+                        </div>
+                      ))}
+                      {inspectorEntries.map(entry => (
+                        <div key={entry.id} className="border border-white/5 rounded bg-black/30">
+                          <button
+                            onClick={() => setExpandedEntries(prev => {
+                              const next = new Set(prev);
+                              next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                              return next;
+                            })}
+                            className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
+                          >
+                            {expandedEntries.has(entry.id) ? (
+                              <ChevronUp className="w-3 h-3 text-gray-600 shrink-0" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3 text-gray-600 shrink-0" />
+                            )}
+                            <span className="text-gray-600 shrink-0">[{entry.time}]</span>
+                            <span className="text-amber-400 truncate">{entry.message}</span>
+                          </button>
+                          {expandedEntries.has(entry.id) && entry.jsonPayload && (
+                            <pre className="px-3 py-2 text-[10px] text-gray-400 border-t border-white/5 overflow-x-auto bg-black/50 max-h-40 overflow-y-auto">
+                              {JSON.stringify(entry.jsonPayload, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Bottom Section: Telemetry Footer */}

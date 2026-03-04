@@ -1395,6 +1395,10 @@ export default function Chat() {
             plan,
           };
           bumpProgress();
+          // Bridge pipeline state to Inspector
+          window.dispatchEvent(new CustomEvent('openmacaw:pipeline', {
+            detail: { status: 'running', ...agenticProgressRef.current }
+          }));
           // Also update DB message status in the query cache so the thread pill renders.
           queryClient.setQueryData(['session', currentSessionId], (old: any) => {
             if (!old) return old;
@@ -1431,6 +1435,10 @@ export default function Chat() {
               plan: cur.plan,
             };
             bumpProgress();
+            // Bridge step progress to Inspector
+            window.dispatchEvent(new CustomEvent('openmacaw:pipeline', {
+              detail: { status: 'running', ...agenticProgressRef.current }
+            }));
           }
           break;
         }
@@ -1448,6 +1456,12 @@ export default function Chat() {
 
         case 'agentic_done': {
           const doneData = data as any;
+          // Bridge done state to Inspector BEFORE clearing progress
+          if (agenticProgressRef.current?.runId === doneData.runId) {
+            window.dispatchEvent(new CustomEvent('openmacaw:pipeline', {
+              detail: { status: 'done', ...agenticProgressRef.current }
+            }));
+          }
           // Clear the live progress overlay (checklist). The checkpoint card
           // clears itself after the user acts — don't touch it here.
           if (agenticProgressRef.current?.runId === doneData.runId) {
@@ -1477,6 +1491,12 @@ export default function Chat() {
 
         case 'agentic_cancelled': {
           const cancelData = data as any;
+          // Bridge cancelled state to Inspector BEFORE clearing
+          if (agenticProgressRef.current?.runId === cancelData.runId) {
+            window.dispatchEvent(new CustomEvent('openmacaw:pipeline', {
+              detail: { status: 'cancelled', ...agenticProgressRef.current }
+            }));
+          }
           // Clear the live progress overlay (checklist).
           if (agenticProgressRef.current?.runId === cancelData.runId) {
             agenticProgressRef.current = null;
