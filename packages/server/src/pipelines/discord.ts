@@ -31,6 +31,7 @@ import {
 } from './runner.js';
 import { createSession } from '../agent/session.js';
 import { updatePipeline } from './manager.js';
+import { getDb, schema } from '../db/index.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -168,15 +169,24 @@ export class DiscordPipeline {
           return;
         }
 
-        // Branch 3: /agent slash command.
-        if (interaction.isChatInputCommand() && interaction.commandName === 'agent') {
-          this.handleAgentCommandAsync(
-            interaction as ChatInputCommandInteraction,
-            pipelineName,
-            pipelineId,
-          ).catch((err) => {
-            console.error(`[Discord Pipeline: ${pipelineName}] /agent error:`, err);
-          });
+        // Branch 3: slash commands.
+        if (interaction.isChatInputCommand()) {
+          if (interaction.commandName === 'agent') {
+            this.handleAgentCommandAsync(
+              interaction as ChatInputCommandInteraction,
+              pipelineName,
+              pipelineId,
+            ).catch((err) => {
+              console.error(`[Discord Pipeline: ${pipelineName}] /agent error:`, err);
+            });
+          } else if (interaction.commandName === 'clear') {
+            this.handleClearCommandAsync(
+              interaction as ChatInputCommandInteraction,
+              pipelineName,
+            ).catch((err) => {
+              console.error(`[Discord Pipeline: ${pipelineName}] /clear error:`, err);
+            });
+          }
           return;
         }
       } catch (err) {
@@ -212,7 +222,8 @@ export class DiscordPipeline {
       console.log(`[Discord Pipeline: ${pipelineName}] Logged in as ${c.user.tag}`);
       try {
         const rest = new REST({ version: '10' }).setToken(cfg.botToken);
-        const command = new SlashCommandBuilder()
+
+        const agentCommand = new SlashCommandBuilder()
           .setName('agent')
           .setDescription('Run an autonomous agentic task with plan review')
           .addStringOption((opt) =>
@@ -230,8 +241,16 @@ export class DiscordPipeline {
           .setIntegrationTypes([ApplicationIntegrationType.GuildInstall])
           .setContexts([InteractionContextType.Guild]);
 
-        await rest.put(Routes.applicationCommands(c.user.id), { body: [command.toJSON()] });
-        console.log(`[Discord Pipeline: ${pipelineName}] Registered global slash command /agent`);
+        const clearCommand = new SlashCommandBuilder()
+          .setName('clear')
+          .setDescription('Clear the conversation history for this pipeline (keeps the session)')
+          .setIntegrationTypes([ApplicationIntegrationType.GuildInstall])
+          .setContexts([InteractionContextType.Guild]);
+
+        await rest.put(Routes.applicationCommands(c.user.id), {
+          body: [agentCommand.toJSON(), clearCommand.toJSON()],
+        });
+        console.log(`[Discord Pipeline: ${pipelineName}] Registered global slash commands /agent, /clear`);
       } catch (err) {
         console.error(`[Discord Pipeline: ${pipelineName}] Failed to register /agent command:`, err);
       }
@@ -684,6 +703,40 @@ export class DiscordPipeline {
     } finally {
       stopTyping();
       this.client?.user?.setPresence({ activities: [], status: 'idle' });
+    }
+  }
+
+  // ── /clear slash command handler ──────────────────────────────────────────
+
+  private async handleClearCommandAsync(
+    interaction: ChatInputCommandInteraction,
+    pipelineName: string,
+  ): Promise<void> {
+    // Ephemeral so the confirmation is only visible to the user who ran /clear,
+    // not broadcast to everyone in the channel.
+    await interaction.deferReply({ ephemeral: true });
+
+    const sessionId = this.record.sessionId;
+    if (!sessionId) {
+      await interaction.editReply('No session is configured for this pipeline.');
+      return;
+    }
+
+    try {
+      const db = getDb();
+      db.delete(schema.messages as any).where(
+        (col: (k: string) => unknown) => col('sessionId') === sessionId,
+      );
+
+      console.log(
+        `[Discord Pipeline: ${pipelineName}] /clear — wiped messages for session ${sessionId}`,
+      );
+
+      await interaction.editReply('✅ Conversation history cleared.');
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Discord Pipeline: ${pipelineName}] /clear failed:`, errMsg);
+      await interaction.editReply(`Failed to clear history: ${errMsg}`).catch(() => undefined);
     }
   }
 }
