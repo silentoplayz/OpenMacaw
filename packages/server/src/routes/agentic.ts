@@ -26,7 +26,74 @@ const startSchema = z.object({
 
 
 
+// ── Summary helper ─────────────────────────────────────────────────────────────
+// Streams a short plain-text summary of the completed agentic run directly to
+// the client, then saves it to the DB and fires message_end.
+//
+// Uses provider.chat() with an EMPTY tools array so it is impossible for the
+// model to make tool calls, hit maxSteps, or trigger a "Max steps reached" error.
+// AgentRuntime is intentionally NOT used here — it always loads all registered
+// tools, which caused the model to attempt further tool calls during the summary.
+async function broadcastSummaryAsync(
+    sessionId: string,
+    model: string,
+    goal: string,
+    planSteps: { description: string }[],
+): Promise<void> {
+    const config = getConfig();
+    const provider = getProviderForModel(model);
+
+    const stepList = planSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
+    const summaryPrompt = `The following agentic task just completed successfully.\n\nGoal: ${goal}\n\nSteps executed:\n${stepList}\n\nWrite a brief 2-3 sentence plain-text summary of what was accomplished. First person, no markdown, no tool calls.`;
+
+    let fullText = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    await provider.chat(
+        model,
+        [
+            { role: 'system', content: config.SYSTEM_PROMPT || 'You are a helpful assistant.' },
+            { role: 'user', content: summaryPrompt },
+        ],
+        [], // no tools — guaranteed text-only response
+        (delta: StreamDelta) => {
+            if (delta.type === 'text_delta' && delta.content) {
+                fullText += delta.content;
+                broadcastToSession(sessionId, { type: 'text_delta', content: delta.content });
+            } else if (delta.type === 'message_end' && delta.usage) {
+                inputTokens = delta.usage.inputTokens;
+                outputTokens = delta.usage.outputTokens;
+            }
+        }
+    );
+
+    // Persist the summary so it appears after a session refresh.
+    if (fullText.trim()) {
+        try {
+            const db = getDrizzleDb();
+            await db.insert(schema.messages).values({
+                id: nanoid(),
+                sessionId,
+                role: 'assistant',
+                content: fullText.trim(),
+                model,
+                inputTokens,
+                outputTokens,
+                createdAt: new Date(),
+            });
+        } catch (e) {
+            console.error('[Agentic] Failed to save summary message:', e);
+        }
+    }
+
+    // message_end triggers queryClient.invalidateQueries on the client so the
+    // newly saved summary row is fetched immediately.
+    broadcastToSession(sessionId, { type: 'message_end', usage: { inputTokens, outputTokens } });
+}
+
 // ── Route Handler ──────────────────────────────────────────────────────────────
+
 
 export async function agenticRoutes(fastify: FastifyInstance): Promise<void> {
 
@@ -385,6 +452,9 @@ Begin now.`;
                 updateAgenticRun(runId, { status: 'done' });
                 if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                 broadcastToSession(sessionId, { type: 'agentic_done', runId });
+
+                // Fire a brief summary so the user sees what the agent did.
+                broadcastSummaryAsync(sessionId, session.model || config.DEFAULT_MODEL, latestRun.goal, latestRun.plan).catch(console.error);
             }
         })();
 
@@ -546,17 +616,8 @@ Begin now.`;
                     updateAgenticRun(runId, { status: 'done' });
                     if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                     broadcastToSession(sessionId, { type: 'agentic_done', runId });
-                    // Fire a brief summary response visible in the chat thread.
-                    createAgentRuntime(
-                        {
-                            sessionId,
-                            model: session.model || config.DEFAULT_MODEL,
-                            systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
-                            mode: session.mode,
-                            maxSteps: 2,
-                        },
-                        (event) => broadcastToSession(sessionId, event)
-                    ).run('[SYSTEM] All steps are complete. The user confirmed the plan. Provide a brief final summary of everything that was accomplished.').catch(console.error);
+                    // Fire a brief summary visible in the chat thread.
+                    broadcastSummaryAsync(sessionId, session.model || config.DEFAULT_MODEL, run.goal, run.plan).catch(console.error);
                 } catch (err) {
                     console.error('[Agentic] Phase 2 execution error:', err);
                     updateAgenticRun(runId, { status: 'cancelled' });
@@ -576,17 +637,8 @@ Begin now.`;
             }
             broadcastToSession(run.sessionId, { type: 'agentic_done', runId: run.id });
 
-            // Fire a brief summary LLM response into the thread.
-            createAgentRuntime(
-                {
-                    sessionId: run.sessionId,
-                    model: session.model || config.DEFAULT_MODEL,
-                    systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
-                    mode: session.mode,
-                    maxSteps: 2,
-                },
-                (event) => broadcastToSession(run.sessionId, event)
-            ).run('[SYSTEM] The user has confirmed your actions. The goal is complete. Provide a brief final summary.').catch(console.error);
+            // Fire a brief summary visible in the chat thread.
+            broadcastSummaryAsync(run.sessionId, session.model || config.DEFAULT_MODEL, run.goal, run.plan).catch(console.error);
         }
 
         return reply.send({ runId: run.id, status: hasPhase2 ? 'running' : 'done' });

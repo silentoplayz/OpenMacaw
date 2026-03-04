@@ -1180,6 +1180,16 @@ export default function Chat() {
     }
   }, [sessions, currentSessionId]);
 
+  // ── Sync URL param → state so sidebar <Link> navigation switches sessions ──
+  // useState(sessionId) only reads the param once at mount. When React Router
+  // updates the URL (e.g. /chat/other-id), useParams() returns the new id but
+  // currentSessionId state stays stale. This effect keeps them in sync.
+  useEffect(() => {
+    if (sessionId && sessionId !== currentSessionId) {
+      setCurrentSessionId(sessionId);
+    }
+  }, [sessionId]);
+
   // RESET state when switching sessions to prevent "ghost text"
   useEffect(() => {
     dispatch({ type: 'RESET_STREAM' });
@@ -1454,6 +1464,10 @@ export default function Chat() {
               }),
             };
           });
+          // Invalidate so any new messages the server wrote (e.g. the summary
+          // assistant message) are fetched. setQueryData alone only updates the
+          // plan message status — it cannot surface new rows from the DB.
+          queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
           break;
         }
 
@@ -1527,6 +1541,25 @@ export default function Chat() {
       wsRef.current = null;
     };
   }, [currentSessionId, connectWebSocket]);
+
+  // ── Reconnect WebSocket + refresh when PWA is foregrounded ─────────────────
+  // On Android the OS closes the WebSocket when the app is backgrounded.
+  // Listen for visibilitychange so we reconnect and pull fresh data as soon as
+  // the user switches back to the app.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' || !currentSessionId) return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        const newWs = connectWebSocket();
+        wsRef.current = newWs;
+      }
+      queryClient.invalidateQueries({ queryKey: ['session', currentSessionId] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [currentSessionId, connectWebSocket, queryClient]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming) return;

@@ -12,17 +12,25 @@ export default defineConfig({
       workbox: {
         // Cache the shell + all static assets
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
-        // Network-first for API/WS calls so the UI always gets fresh data
+        // NetworkOnly for all API and WS routes.
+        // IMPORTANT: urlPattern is matched against the FULL URL string, not just
+        // the path. Path-only regexes like /^\/api\// never match and Workbox
+        // silently falls through to precache, serving stale API responses.
+        // Use a function that checks url.pathname instead.
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/.*/i,
+            urlPattern: ({ url }: { url: URL }) => url.pathname.startsWith('/api/'),
             handler: 'NetworkOnly',
           },
           {
-            urlPattern: /^\/ws\/.*/i,
+            urlPattern: ({ url }: { url: URL }) => url.pathname.startsWith('/ws/'),
             handler: 'NetworkOnly',
           },
         ],
+        // Serve index.html for all navigation requests (SPA fallback).
+        // Explicitly deny the API/WS paths so they are never treated as navigations.
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/^\/api\//, /^\/ws\//],
         // Skip waiting so new service worker activates immediately on refresh
         skipWaiting: true,
         clientsClaim: true,
