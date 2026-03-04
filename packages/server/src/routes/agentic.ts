@@ -96,6 +96,32 @@ async function broadcastSummaryAsync(
     broadcastToSession(sessionId, { type: 'message_end', usage: { inputTokens, outputTokens } });
 }
 
+// ── Completion fallback ────────────────────────────────────────────────────────
+// When the model finishes a run without producing a text-only final turn
+// (e.g. the last turn was a tool call, or the model omitted its summary),
+// call this to guarantee the user always sees a closing message in the thread.
+async function broadcastCompletionFallbackAsync(sessionId: string): Promise<void> {
+    const text = 'All steps have been completed successfully.';
+    try {
+        await getDrizzleDb().insert(schema.messages).values({
+            id: nanoid(),
+            sessionId,
+            role: 'assistant',
+            content: text,
+            createdAt: new Date(),
+        });
+    } catch (e) {
+        console.error('[Agentic] Failed to save completion fallback message:', e);
+    }
+    // Stream the text so it appears inline without waiting for a manual refresh.
+    const chunks = text.match(/.{1,64}/gs) ?? [text];
+    for (const chunk of chunks) {
+        broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
+    }
+    // message_end triggers queryClient.invalidateQueries → client fetches the saved row.
+    broadcastToSession(sessionId, { type: 'message_end', usage: { inputTokens: 0, outputTokens: 0 } });
+}
+
 // ── Route Handler ──────────────────────────────────────────────────────────────
 
 
@@ -337,6 +363,7 @@ Begin now.`;
             // Turns with no tool calls are the final report turn — stream it to the client.
             let currentTurnHasToolCall = false;
             let currentTurnTextBuffer = '';
+            let hadFinalTextTurn = false;
 
             const STEP_START_RE = /\[STEP_START:(\d+)\]/g;
             const STEP_DONE_RE  = /\[STEP_DONE:(\d+)\]/g;
@@ -400,47 +427,48 @@ Begin now.`;
                     broadcastToSession(sessionId, event);
                 } else if (event.type === 'tool_call_result') {
                     broadcastToSession(sessionId, event);
-                } else if (event.type === 'message_end') {
-                    if (!currentTurnHasToolCall && currentTurnTextBuffer.length > 0) {
-                        // This is the final report turn — stream the buffered text to the client.
-                        const chunks = currentTurnTextBuffer.match(/.{1,64}/gs) ?? [currentTurnTextBuffer];
-                        for (const chunk of chunks) {
-                            broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
+                    } else if (event.type === 'message_end') {
+                        if (!currentTurnHasToolCall && currentTurnTextBuffer.length > 0) {
+                            // This is the final report turn — stream the buffered text to the client.
+                            hadFinalTextTurn = true;
+                            const chunks = currentTurnTextBuffer.match(/.{1,64}/gs) ?? [currentTurnTextBuffer];
+                            for (const chunk of chunks) {
+                                broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
+                            }
+                            // Forward message_end so the client triggers a session refetch.
+                            broadcastToSession(sessionId, event);
                         }
-                        // Forward message_end so the client triggers a session refetch.
+                        // Reset per-turn state.
+                        currentTurnHasToolCall = false;
+                        currentTurnTextBuffer = '';
+                    } else {
                         broadcastToSession(sessionId, event);
                     }
-                    // Reset per-turn state.
-                    currentTurnHasToolCall = false;
-                    currentTurnTextBuffer = '';
-                } else {
-                    broadcastToSession(sessionId, event);
-                }
-            };
+                };
 
-            try {
-                await createAgentRuntime(
-                    {
-                        sessionId,
-                        model: session.model || config.DEFAULT_MODEL,
-                        personality: session.personality || config.PERSONALITY,
-                        mode: session.mode,
-                        maxSteps: config.MAX_STEPS,
-                        autoExecute: true,
-                        signal: phaseAbort.signal,
-                        approvalFn: async (call) => {
-                            addPendingAction(runId, { tool: call.toolName, server: call.serverId, input: call.input });
-                            return true;
+                try {
+                    await createAgentRuntime(
+                        {
+                            sessionId,
+                            model: session.model || config.DEFAULT_MODEL,
+                            personality: session.personality || config.PERSONALITY,
+                            mode: session.mode,
+                            maxSteps: config.MAX_STEPS,
+                            autoExecute: true,
+                            signal: phaseAbort.signal,
+                            approvalFn: async (call) => {
+                                addPendingAction(runId, { tool: call.toolName, server: call.serverId, input: call.input });
+                                return true;
+                            },
                         },
-                    },
-                    handleEvent,
-                ).run(phaseMsg);
-                return { ok: true, checkpointFired };
-            } catch (err: unknown) {
-                if (abortedForCheckpoint) return { ok: true, checkpointFired: true };
-                console.error('[Agentic] Phase execution error:', err);
-                return { ok: false, checkpointFired };
-            }
+                        handleEvent,
+                    ).run(phaseMsg);
+                    return { ok: true, checkpointFired, hadFinalTextTurn };
+                } catch (err: unknown) {
+                    if (abortedForCheckpoint) return { ok: true, checkpointFired: true, hadFinalTextTurn };
+                    console.error('[Agentic] Phase execution error:', err);
+                    return { ok: false, checkpointFired, hadFinalTextTurn };
+                }
         };
 
         // Fire and forget (phase 1)
@@ -473,11 +501,14 @@ Begin now.`;
             // No checkpoint — mark done.
             const latestRun = getAgenticRun(runId);
             if (latestRun && latestRun.status === 'running') {
+                // If the model didn't produce a text-only final turn, inject a guaranteed
+                // completion message so the thread always ends with visible output.
+                if (!result.hadFinalTextTurn) {
+                    await broadcastCompletionFallbackAsync(sessionId);
+                }
                 updateAgenticRun(runId, { status: 'done' });
                 if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                 broadcastToSession(sessionId, { type: 'agentic_done', runId });
-                // The actual final report was already streamed to the client by handleEvent
-                // (final turn with no tool calls) and saved to DB by the runtime. No summary needed.
             }
         })();
 
@@ -569,6 +600,7 @@ Begin now.`;
                 // Turns with no tool calls are the final report turn — stream it to the client.
                 let currentTurnHasToolCall = false;
                 let currentTurnTextBuffer = '';
+                let hadFinalTextTurn = false;
 
                 const STEP_START_RE = /\[STEP_START:(\d+)\]/g;
                 const STEP_DONE_RE  = /\[STEP_DONE:(\d+)\]/g;
@@ -623,6 +655,7 @@ Begin now.`;
                     } else if (event.type === 'message_end') {
                         if (!currentTurnHasToolCall && currentTurnTextBuffer.length > 0) {
                             // This is the final report turn — stream the buffered text to the client.
+                            hadFinalTextTurn = true;
                             const chunks = currentTurnTextBuffer.match(/.{1,64}/gs) ?? [currentTurnTextBuffer];
                             for (const chunk of chunks) {
                                 broadcastToSession(sessionId, { type: 'text_delta', content: chunk });
@@ -655,11 +688,14 @@ Begin now.`;
                         handleEvent,
                     ).run(phase2Message);
 
+                    // If the model didn't produce a text-only final turn, inject a guaranteed
+                    // completion message so the thread always ends with visible output.
+                    if (!hadFinalTextTurn) {
+                        await broadcastCompletionFallbackAsync(sessionId);
+                    }
                     updateAgenticRun(runId, { status: 'done' });
                     if (planMsgId) getDrizzleDb().update(schema.messages).set({ status: 'agentic_done' }).where(eq(schema.messages.id, planMsgId)).catch(console.error);
                     broadcastToSession(sessionId, { type: 'agentic_done', runId });
-                    // The actual final report was already streamed to the client by handleEvent
-                    // (final turn with no tool calls) and saved to DB by the runtime. No summary needed.
                 } catch (err) {
                     console.error('[Agentic] Phase 2 execution error:', err);
                     updateAgenticRun(runId, { status: 'cancelled' });
