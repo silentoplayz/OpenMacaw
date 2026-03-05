@@ -4,6 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body {
+  background-color: #000000 !important;
+  margin: 0;
+  padding: 0;
+}
+
 @layer base {
   body {
     @apply antialiased bg-gray-50 text-gray-900 border-gray-200;

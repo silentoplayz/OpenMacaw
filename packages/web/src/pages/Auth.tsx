@@ -9,6 +9,7 @@ export default function Auth() {
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [allowSignup, setAllowSignup] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
@@ -20,6 +21,7 @@ export default function Auth() {
     apiFetch('/api/auth/status')
       .then(r => r.json())
       .then(data => {
+        setAllowSignup(data.enableSignup !== false);
         if (data.needsSetup) {
           setMode('signup');
         } else {
@@ -160,18 +162,18 @@ export default function Auth() {
           {mode === 'signup' ? (
             <p>
               Already have an account?{' '}
-              <button onClick={toggleMode} className="text-white hover:underline font-medium focus:outline-none">
+              <button type="button" onClick={toggleMode} className="text-white hover:underline font-medium focus:outline-none">
                 Sign in
               </button>
             </p>
-          ) : (
+          ) : allowSignup ? (
             <p>
               Don't have an account?{' '}
-              <button onClick={toggleMode} className="text-white hover:underline font-medium focus:outline-none">
+              <button type="button" onClick={toggleMode} className="text-white hover:underline font-medium focus:outline-none">
                 Sign up
               </button>
             </p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

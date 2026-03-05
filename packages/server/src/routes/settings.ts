@@ -161,7 +161,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   // ── User Profile (Direct users table updates) ───────────────────────────────
   fastify.put('/api/user/profile', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;
-    if (!user?.id) {
+    if (!user || !user.id) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
 
@@ -208,8 +208,17 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
 
     const { getDrizzleDb } = await import('../db/index.js');
     const { eq } = await import('drizzle-orm');
-    await getDrizzleDb().update(schema.users as any).set(updates).where(eq((schema.users as any).id, user.id));
+    const updatedRows = (await getDrizzleDb().update(schema.users as any)
+      .set(updates)
+      .where(eq((schema.users as any).id, user.id))
+      .returning()) as any[];
 
-    return reply.send({ success: true, updates });
+    console.log('[Avatar DB] Update result:', updatedRows);
+    
+    if (!updatedRows || updatedRows.length === 0) {
+      return reply.code(404).send({ error: 'User not found or update failed' });
+    }
+
+    return reply.send({ success: true, updates, user: updatedRows[0] });
   });
 }

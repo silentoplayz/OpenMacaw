@@ -4,7 +4,6 @@ import * as schema from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import { nanoid } from 'nanoid';
-import { getActiveSettings } from '../config.js';
 
 const loginAttempts = new Map<string, { count: number, resetAt: number }>();
 
@@ -12,7 +11,9 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.get('/api/auth/status', async (_request, _reply) => {
     const db = getDrizzleDb();
     const existingUsers = await db.select().from(schema.users).limit(1);
-    return { needsSetup: existingUsers.length === 0 };
+    const settingsData = await db.select().from(schema.settings).where(eq(schema.settings.key, 'ENABLE_SIGNUP')).limit(1);
+    const enableSignup = settingsData.length > 0 ? settingsData[0].value !== 'false' : true;
+    return { needsSetup: existingUsers.length === 0, enableSignup };
   });
 
   fastify.post('/api/auth/register', async (request, reply) => {
@@ -33,17 +34,23 @@ export async function authRoutes(fastify: FastifyInstance) {
     const allUsers = await db.select().from(schema.users).limit(1);
     const isFirstUser = allUsers.length === 0;
     
-    let role = isFirstUser ? 'admin' : 'pending';
+    let role = 'user';
     
-    if (!isFirstUser) {
-      const config = getActiveSettings();
+    if (isFirstUser) {
+      role = 'admin';
+    } else {
+      const settingsData = await db.select().from(schema.settings);
+      const config: Record<string, string> = {};
+      for (const row of settingsData) {
+        config[row.key] = row.value;
+      }
+      
       // True by default, but block if explicitly false in config/env
-      if (config.ENABLE_SIGNUP === false || (config as any).ENABLE_SIGNUP === 'false') {
+      if (config.ENABLE_SIGNUP === 'false') {
         return reply.code(403).send({ error: 'User registration is currently disabled' });
       }
       
-      // Force all non-first users to 'pending' to ensure gatekeeping
-      role = 'pending';
+      role = config.DEFAULT_NEW_USER_ROLE || 'pending';
     }
 
     const isSuperAdmin = isFirstUser ? 1 : 0;

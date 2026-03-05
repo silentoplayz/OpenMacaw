@@ -24,7 +24,11 @@
     <!-- Manifest injected by vite-plugin-pwa -->
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="loading-screen" style="position:fixed; inset:0; display:flex; justify-content:center; align-items:center; background-color:#000000; z-index: 9999;">
+         <span style="font-size: 4rem;">🦜</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

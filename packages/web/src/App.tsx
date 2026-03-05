@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MessageSquare, Server, Activity, Settings, Bird,
@@ -260,12 +260,16 @@ function AgentPanel({ isOpen, onClose, isCollapsed }: { isOpen: boolean; onClose
 
 function App() {
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
   // Mobile overlay nav — starts closed; desktop sidebar is always visible.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [executionLogs, setExecutionLogs] = useState<{ id: string, time: string, message: string, type: 'info' | 'success' | 'error' }[]>([]);
   const inspectorRef = useRef<HTMLDivElement>(null);
+  
+  // Custom Deletion Modal State
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [isGlobalStreaming, setIsGlobalStreaming] = useState(false);
   const { user, logout } = useAuth();
@@ -468,6 +472,8 @@ function App() {
   ];
 
   const handleNewChat = () => {
+    navigate('/chat');
+    setMobileNavOpen(false);
     window.dispatchEvent(new CustomEvent('openmacaw:new-chat'));
   };
 
@@ -613,9 +619,9 @@ function App() {
         ].join(' ')}>
 
           {/* Logo & Toggle */}
-          <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 shrink-0 whitespace-nowrap">
+          <div className="flex items-center justify-between h-14 px-4 border-b border-white/5 shrink-0">
             <div className="flex items-center gap-2">
-              <Bird className="w-4 h-4 text-cyan-500" />
+              <Bird className="w-4 h-4 text-cyan-500 shrink-0" />
               <span className="font-bold text-white text-sm">OpenMacaw</span>
             </div>
             <button
@@ -1346,11 +1352,8 @@ function App() {
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (confirm('Delete this conversation? This cannot be undone.')) {
-                      deleteSessionMutation.mutate(session.id);
-                    } else {
-                      setActiveMenuId(null);
-                    }
+                    setSessionToDelete(session.id);
+                    setActiveMenuId(null);
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
                 >
@@ -1363,6 +1366,54 @@ function App() {
           document.body
         )
       )}
+
+      {/* Delete Chat Modal */}
+      <AnimatePresence>
+        {sessionToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={() => setSessionToDelete(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-zinc-950 border border-rose-500/30 rounded-xl p-6 shadow-2xl w-full max-w-sm m-4 z-10"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-rose-500/10 rounded-full">
+                  <AlertOctagon className="w-6 h-6 text-rose-500" />
+                </div>
+                <h3 className="text-lg font-bold text-white uppercase tracking-wider">Delete Chat?</h3>
+              </div>
+              <p className="text-sm text-gray-400 mb-6">
+                Are you sure you want to delete this conversation? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setSessionToDelete(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    deleteSessionMutation.mutate(sessionToDelete);
+                    setSessionToDelete(null);
+                  }}
+                  className="px-4 py-2 text-sm font-medium bg-rose-600 text-white rounded-lg hover:bg-rose-500 transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 }
