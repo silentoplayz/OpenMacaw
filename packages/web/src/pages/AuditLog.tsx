@@ -127,7 +127,7 @@ export default function AuditLog() {
                     <tr onClick={() => toggleRow(activity.id)} className={`hover:bg-white/[0.05] cursor-pointer transition-colors font-mono text-xs ${isExpanded ? 'bg-white/[0.02]' : ''}`}>
                       <td className="px-3 py-2 text-gray-500 whitespace-nowrap flex items-center gap-1">
                         {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                        [{new Date(activity.timestamp).toISOString().replace('T', ' ').substring(0, 19)}]
+                        [{new Date(Number(activity.timestamp) < 10000000000 ? Number(activity.timestamp) * 1000 : Number(activity.timestamp)).toISOString().replace('T', ' ').substring(0, 19)}]
                       </td>
                       <td className="px-3 py-2 text-cyan-600">
                         <span className="opacity-50">CALL </span>

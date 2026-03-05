@@ -299,6 +299,24 @@ function App() {
   const [renameValue, setRenameValue] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // ── Modals & Dialogues Keyboard Bindings ──
+  useEffect(() => {
+    if (!sessionToDelete) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSessionToDelete(null);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        deleteSessionMutation.mutate(sessionToDelete);
+        setSessionToDelete(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sessionToDelete]);
+
   // Close context menu on outside click or scroll
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
