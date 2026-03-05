@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
+import { UserMenu } from './components/UserMenu';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from './contexts/AuthContext';
 
@@ -274,6 +275,7 @@ function App() {
   const [isGlobalStreaming, setIsGlobalStreaming] = useState(false);
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
 
   // Sidebar grouping & layout state
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -626,62 +628,82 @@ function App() {
 
         {/* ── Left sidebar — always visible on desktop, overlay on mobile ── */}
         <aside className={[
-          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40',
+          'flex flex-col bg-zinc-950 border-r border-white/5 shrink-0 z-40 overflow-x-hidden',
           'transition-all duration-300 ease-in-out',
-          // Mobile: fixed overlay, slides in/out
+          // Mobile: fixed overlay, slides in/out. Fixed width 224px (w-56)
           'fixed inset-y-0 left-0 shadow-2xl w-56',
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
           // Desktop: in flex flow
-          'lg:relative lg:shadow-none',
-          isSidebarOpen ? 'lg:translate-x-0 lg:w-56 opacity-100' : 'lg:-translate-x-full lg:w-0 opacity-0 overflow-hidden'
+          'lg:relative lg:translate-x-0 lg:shadow-none',
+          isSidebarOpen ? 'lg:w-64 opacity-100' : 'lg:w-16 opacity-100'
         ].join(' ')}>
 
-          {/* Logo & Toggle */}
-          <div className="flex items-center justify-between h-14 px-4 border-b border-white/5 shrink-0">
-            <div className="flex items-center gap-2">
-              <Bird className="w-4 h-4 text-cyan-500 shrink-0" />
-              <span className="font-bold text-white text-sm">OpenMacaw</span>
+          {/* Logo & Toggle - Morphing Header */}
+          {isSidebarOpen ? (
+            <div className="flex items-center h-14 border-b border-white/5 shrink-0 px-4 justify-between">
+              <div className="flex items-center gap-2">
+                <Bird className="w-4 h-4 text-cyan-500 shrink-0" />
+                <span className="font-bold text-white text-sm whitespace-nowrap">OpenMacaw</span>
+              </div>
+              <button
+                onClick={toggleSidebar}
+                className="hidden lg:flex p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+                title="Close Sidebar"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
             </div>
-            <button
+          ) : (
+            <div 
+              className="flex items-center justify-center h-14 border-b border-white/5 shrink-0 cursor-pointer group"
               onClick={toggleSidebar}
-              className="hidden lg:flex p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
-              title="Close Sidebar"
+              onMouseEnter={() => setIsHeaderHovered(true)}
+              onMouseLeave={() => setIsHeaderHovered(false)}
+              title="Expand Sidebar"
             >
-              <PanelLeftClose className="w-4 h-4" />
-            </button>
-          </div>
+              <div className="relative w-5 h-5 flex items-center justify-center">
+                <Bird 
+                  className={`w-5 h-5 text-cyan-500 absolute top-0 left-0 transition-opacity duration-200 ${isHeaderHovered ? 'opacity-0' : 'opacity-100'}`} 
+                />
+                <PanelLeftOpen 
+                  className={`w-5 h-5 text-gray-400 absolute top-0 left-0 transition-opacity duration-200 ${isHeaderHovered ? 'opacity-100' : 'opacity-0'}`} 
+                />
+              </div>
+            </div>
+          )}
 
           {/* New Chat — top of sidebar, always visible */}
-          <div className="px-2 pt-2 pb-1 shrink-0">
+          <div className={`pt-2 pb-1 shrink-0 ${isSidebarOpen ? 'px-2' : 'px-0 flex justify-center'}`}>
             <button
               onClick={() => { handleNewChat(); setMobileNavOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/5 border border-white/5 text-gray-300 hover:bg-cyan-950/40 hover:border-cyan-500/20 hover:text-cyan-300 transition-all"
+              title="New Chat"
+              className={`flex items-center rounded-lg text-sm font-medium bg-white/5 border border-white/5 text-gray-300 hover:bg-cyan-950/40 hover:border-cyan-500/20 hover:text-cyan-300 transition-all ${isSidebarOpen ? 'w-full gap-2 px-3 py-2' : 'p-2'}`}
             >
-              <PenSquare className="w-3.5 h-3.5 shrink-0" />
-              <span>New Chat</span>
+              <PenSquare className="w-4 h-4 shrink-0" />
+              <span className={`whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden lg:inline-block'}`}>New Chat</span>
             </button>
           </div>
 
           {/* Nav items — Chat item expands to show sessions when active */}
-          <nav className="p-2 space-y-0.5">
+          <nav className={`p-2 space-y-0.5 ${!isSidebarOpen && 'flex flex-col items-center'}`}>
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname.startsWith(item.path);
               const isChat = item.path === '/chat';
               return (
-                <div key={item.path}>
+                <div key={item.path} className={!isSidebarOpen ? 'w-full flex justify-center' : ''}>
                   <Link
                     to={item.path}
                     title={item.label}
                     onClick={() => setMobileNavOpen(false)}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+                    className={`flex items-center rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'} ${isSidebarOpen ? 'gap-2 px-2 py-1.5' : 'p-2 justify-center'}`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    <span className="font-medium">{item.label}</span>
+                    <span className={`font-medium whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden lg:inline-block'}`}>{item.label}</span>
                   </Link>
 
                   {/* Chat sessions submenu — grouped workspaces */}
-                  {isChat && chatActive && (
+                  {isChat && chatActive && isSidebarOpen && (
                     <div className="mt-1 overflow-y-auto space-y-1 pb-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                       {chatSessions && chatSessions.length === 0 ? (
                         <div className="px-4 py-3 text-center">
@@ -821,130 +843,87 @@ function App() {
 
           <div className="mx-2 my-1 border-t border-white/5" />
 
-          <div className="flex-1 overflow-y-auto p-2">
-            <div className="px-1 mb-2">
-              <span className="text-[10px] uppercase font-mono tracking-wider text-gray-500 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3 h-3 text-cyan-500" /> Active Servers
-              </span>
-            </div>
-            <div className="space-y-0.5">
-              {servers?.filter(s => s.status === 'running' || s.status === 'paused').map((server) => (
-                <div
-                  key={server.id}
-                  onClick={() => { setSelectedServerId(server.id); setMobileNavOpen(false); }}
-                  className="flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-white/10 transition-colors group"
-                >
-                  <span className="text-xs font-mono text-gray-400 group-hover:text-gray-300 truncate flex-1 min-w-0 mr-2">
-                    {server.name}
-                  </span>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Settings2 className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity text-cyan-500" />
-                    <div title={server.status} className={`w-1.5 h-1.5 rounded-full ${server.status === 'running' ? 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.8)]' : 'bg-yellow-500'}`} />
+          {/* Active Servers Block — completely unmount on Slim Dock */}
+          {isSidebarOpen && (
+            <div className="flex-1 overflow-y-auto p-2">
+              <div className="px-1 mb-2">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-gray-500 flex items-center gap-1.5 whitespace-nowrap">
+                  <CheckCircle2 className="w-3 h-3 text-cyan-500" /> Active Servers
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {servers?.filter(s => s.status === 'running' || s.status === 'paused').map((server) => (
+                  <div
+                    key={server.id}
+                    onClick={() => { setSelectedServerId(server.id); setMobileNavOpen(false); }}
+                    className="flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-white/10 transition-colors group"
+                  >
+                    <span className="text-xs font-mono text-gray-400 group-hover:text-gray-300 truncate flex-1 min-w-0 mr-2 whitespace-nowrap">
+                      {server.name}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Settings2 className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity text-cyan-500" />
+                      <div title={server.status} className={`w-1.5 h-1.5 rounded-full ${server.status === 'running' ? 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.8)]' : 'bg-yellow-500'}`} />
+                    </div>
                   </div>
-                </div>
-              ))}
-              {(!servers || servers.filter(s => s.status === 'running' || s.status === 'paused').length === 0) && (
-                <div className="text-[10px] text-gray-500 italic px-1">No active servers</div>
-              )}
+                ))}
+                {(!servers || servers.filter(s => s.status === 'running' || s.status === 'paused').length === 0) && (
+                  <div className="text-[10px] text-gray-500 italic px-1 whitespace-nowrap">No active servers</div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="px-2 pb-2">
-            <button
-              onClick={() => haltMutation.mutate()}
-              disabled={haltMutation.isPending || !isGlobalStreaming}
-              className={`w-full flex items-center justify-center gap-2 px-3 py-2 border rounded text-xs font-bold uppercase tracking-wider transition-all
-                ${isGlobalStreaming
-                  ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]'
-                  : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
-                }`}
-            >
-              <AlertOctagon className="w-4 h-4" />
-              {haltMutation.isPending ? 'Halting...' : 'Halt All'}
-            </button>
-          </div>
-
-          <div className="p-2 border-t border-white/5 space-y-1">
-            <button
-              onClick={() => { setIsAgentPanelOpen(true); setMobileNavOpen(false); }}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors"
-            >
-              <Bot className="w-4 h-4 shrink-0" />
-              <span className="font-medium text-left">Configure Agent</span>
-            </button>
+          <div className="mt-auto shrink-0 flex flex-col space-y-1 mt-2">
             
-            {/* User Profile / Logout */}
-            <div className="pt-2 mt-2 border-t border-white/5 relative">
-              <button 
-                onClick={() => setProfileOpen(!profileOpen)}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-white/5 transition-colors group"
+            {/* Halt All / Emergency Stop */}
+            <div className={`px-2 ${!isSidebarOpen && 'flex justify-center'}`}>
+              <button
+                onClick={() => haltMutation.mutate()}
+                disabled={haltMutation.isPending || !isGlobalStreaming}
+                title="Halt All Streams"
+                className={`flex items-center justify-center rounded text-xs font-bold uppercase tracking-wider transition-all
+                  ${isSidebarOpen ? 'w-full gap-2 px-3 py-2 border' : 'p-2 border'}
+                  ${isGlobalStreaming
+                    ? 'bg-rose-950/40 text-rose-500 border-rose-500/50 hover:bg-rose-900/60 hover:text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)] animate-[pulse_2s_ease-in-out_infinite]'
+                    : 'bg-zinc-900/50 text-gray-500 border-white/10 opacity-50 cursor-not-allowed'
+                  }`}
               >
-                <div className="w-6 h-6 rounded bg-cyan-950/50 border border-cyan-500/20 flex items-center justify-center shrink-0 group-hover:bg-cyan-900/50 transition-colors">
-                  <span className="text-xs font-mono font-bold text-cyan-500 uppercase">
-                    {user?.name?.charAt(0) || 'U'}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0 text-left">
-                  <p className="text-xs font-medium text-gray-200 truncate">{user?.name || 'User'}</p>
-                  <p className="text-[9px] font-mono text-gray-500 truncate">{user?.role || 'admin'}</p>
-                </div>
-                {profileOpen ? <ChevronUp className="w-3 h-3 text-gray-500" /> : <ChevronDown className="w-3 h-3 text-gray-500" />}
+                <AlertOctagon className="w-4 h-4 shrink-0" />
+                <span className={`transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden lg:block lg:opacity-0 lg:w-0 lg:overflow-hidden'}`}>
+                  {haltMutation.isPending ? 'Halting...' : 'Halt All'}
+                </span>
               </button>
-
-              {/* Dropdown Menu */}
-              {profileOpen && (
-                <div className="absolute bottom-full left-0 w-full mb-1 bg-zinc-900 border border-white/10 rounded-lg shadow-xl overflow-hidden shadow-[0_-5px_20px_rgba(0,0,0,0.5)] z-50 animate-in slide-in-from-bottom-2 duration-150">
-                  <div className="px-3 py-2 border-b border-white/5">
-                    <p className="text-xs font-medium text-white truncate">{user?.email}</p>
-                  </div>
-                  <Link
-                    to="/settings"
-                    onClick={() => { setProfileOpen(false); setMobileNavOpen(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    Settings
-                  </Link>
-                  {user?.role === 'admin' && (
-                    <Link
-                      to="/admin"
-                      onClick={() => { setProfileOpen(false); setMobileNavOpen(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-400 hover:bg-amber-950/30 hover:text-amber-300 transition-colors"
-                    >
-                      <Settings2 className="w-3.5 h-3.5" />
-                      Admin Panel
-                    </Link>
-                  )}
-                  <div className="border-t border-white/5" />
-                  <button
-                    onClick={() => {
-                      logout();
-                      setProfileOpen(false);
-                      setMobileNavOpen(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950/30 hover:text-rose-300 transition-colors"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    Log Out
-                  </button>
-                </div>
-              )}
             </div>
+
+            {/* Configure Agent */}
+            <div className={`px-2 border-t border-white/5 pt-2 ${!isSidebarOpen && 'flex justify-center'}`}>
+              <button
+                onClick={() => { setIsAgentPanelOpen(true); setMobileNavOpen(false); }}
+                title="Configure Agent"
+                className={`flex items-center rounded-md text-sm text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors
+                  ${isSidebarOpen ? 'w-full gap-2 px-2 py-1.5' : 'p-2'}`}
+              >
+                <Bot className="w-4 h-4 shrink-0" />
+                <span className={`font-medium transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden lg:block lg:opacity-0 lg:w-0 lg:overflow-hidden'}`}>
+                  Configure Agent
+                </span>
+              </button>
+            </div>
+
+            {/* User Profile / Logout (Portal injected) */}
+            <UserMenu 
+              user={user} 
+              isSidebarOpen={isSidebarOpen} 
+              logout={logout} 
+              setMobileNavOpen={setMobileNavOpen} 
+            />
+
           </div>
         </aside>
 
         {/* ── Middle Pane ── */}
         <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 lg:pt-0 delay-150 duration-300 transition-all">
-          {/* Floating toggle button when sidebar is collapsed */}
-          {!isSidebarOpen && (
-            <button
-              onClick={toggleSidebar}
-              className="hidden lg:flex absolute top-3 left-3 z-50 p-2 rounded-md bg-zinc-900 border border-white/10 text-gray-400 hover:text-white hover:bg-zinc-800 shadow-lg transition-colors animate-in fade-in"
-              title="Open Sidebar"
-            >
-              <PanelLeftOpen className="w-4 h-4" />
-            </button>
-          )}
           <Outlet />
         </main>
 
