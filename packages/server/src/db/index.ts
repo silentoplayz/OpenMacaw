@@ -89,6 +89,7 @@ const SCHEMA_SQL = `
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
+    is_super_admin INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
 
@@ -327,6 +328,28 @@ export function initDatabase(): void {
   try {
     sqlite.exec("ALTER TABLE sessions ADD COLUMN folder_id TEXT");
   } catch (e) { /* column already exists */ }
+
+  // ── Phase 74: Immutable Root Admin ──────────────────────────────────────────
+  try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0");
+    // Crown the first-ever registered user (oldest created_at)
+    sqlite.exec(`
+      UPDATE users SET is_super_admin = 1
+      WHERE id = (
+        SELECT id FROM users ORDER BY created_at ASC LIMIT 1
+      ) AND is_super_admin = 0
+    `);
+    console.log('[DB Migration] Phase 74: is_super_admin column added and root admin crowned.');
+  } catch (e) { /* column already exists — still attempt the crown grant */ 
+    try {
+      sqlite.exec(`
+        UPDATE users SET is_super_admin = 1
+        WHERE id = (
+          SELECT id FROM users ORDER BY created_at ASC LIMIT 1
+        ) AND is_super_admin = 0
+      `);
+    } catch { /* already crowned */ }
+  }
 
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Users, MessageSquare, Database, Trash2, ShieldAlert, Loader2, Pencil, X, Save, Cpu, Bot, Shield, CheckCircle2, Settings2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Users, MessageSquare, Database, Trash2, ShieldAlert, Loader2, Pencil, X, Save, Cpu, Bot, Shield, CheckCircle2, Settings2, ToggleLeft, ToggleRight, Crown, UserPlus } from 'lucide-react';
 import { apiFetch } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -16,6 +16,7 @@ interface AdminUser {
   name: string;
   email: string;
   role: string;
+  isSuperAdmin: number;
   lastActive: string | null;
   createdAt: string;
 }
@@ -82,19 +83,39 @@ function EditUserModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { refreshUser } = useAuth();
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
   const [role, setRole] = useState(user.role);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
 
   const isSelf = user.id === currentUserId;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      setError('');
+
+      // Password validation (only for non-self edits)
+      if (!isSelf && newPassword) {
+        if (newPassword.length < 8) {
+          throw new Error('Password must be at least 8 characters.');
+        }
+        if (newPassword !== confirmPassword) {
+          throw new Error('Passwords do not match.');
+        }
+      }
+
+      const payload: Record<string, string> = { name, email, role };
+      if (!isSelf && newPassword) {
+        payload.password = newPassword;
+      }
+
       const res = await apiFetch(`/api/admin/users/${user.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, role }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -102,7 +123,11 @@ function EditUserModal({
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      // If editing our own profile, refresh global auth state so sidebar reflects changes instantly
+      if (isSelf) {
+        await refreshUser();
+      }
       onSaved();
       onClose();
     },
@@ -128,7 +153,7 @@ function EditUserModal({
               <X className="w-4 h-4 text-gray-500 hover:text-white" />
             </button>
           </div>
-          <div className="px-5 py-4 space-y-4">
+          <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
             {error && (
               <div className="px-3 py-2 bg-rose-950/50 border border-rose-500/20 rounded-md text-xs text-rose-400 font-mono">
                 {error}
@@ -153,6 +178,39 @@ function EditUserModal({
               </select>
               {isSelf && <p className="mt-1 text-[10px] text-gray-600 font-mono">You cannot change your own role.</p>}
             </div>
+
+            {/* Change Password — only for other users */}
+            {!isSelf && (
+              <div className="pt-2 border-t border-white/5 space-y-3">
+                <p className="text-[10px] font-mono uppercase tracking-wider text-gray-500">Change Password</p>
+                <div>
+                  <label className="block text-xs font-mono text-gray-400 mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Leave blank to keep unchanged"
+                    className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 font-mono placeholder:text-gray-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-gray-400 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className={`w-full px-3 py-2 bg-black border rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 font-mono ${
+                      confirmPassword && newPassword !== confirmPassword
+                        ? 'border-rose-500/50 focus:ring-rose-500'
+                        : 'border-white/10 focus:ring-cyan-500 focus:border-cyan-500'
+                    }`}
+                  />
+                  {confirmPassword && newPassword !== confirmPassword && (
+                    <p className="mt-1 text-[10px] text-rose-400 font-mono">Passwords do not match.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="px-5 py-4 border-t border-white/5 flex items-center justify-end gap-2">
             <button onClick={onClose} className="px-3 py-1.5 text-xs font-mono text-gray-400 hover:text-white hover:bg-white/5 rounded-md transition-colors">Cancel</button>
@@ -168,6 +226,133 @@ function EditUserModal({
   );
 }
 
+// ── Add User Modal ────────────────────────────────────────────────────────────
+
+function AddUserModal({
+  onClose,
+  onSaved,
+  viewerIsSuperAdmin,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+  viewerIsSuperAdmin: boolean;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState('user');
+  const [error, setError] = useState('');
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      setError('');
+      if (!name.trim() || !email.trim() || !password) {
+        throw new Error('Name, email, and password are required.');
+      }
+      if (password.length < 8) {
+        throw new Error('Password must be at least 8 characters.');
+      }
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
+      const res = await apiFetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, role }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Create failed');
+      }
+      return res.json();
+    },
+    onSuccess: () => { onSaved(); onClose(); },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          className="w-full max-w-md bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+            <div className="flex items-center gap-2">
+              <UserPlus className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Add User</h2>
+            </div>
+            <button onClick={onClose} className="p-1 hover:bg-white/5 rounded-md transition-colors">
+              <X className="w-4 h-4 text-gray-500 hover:text-white" />
+            </button>
+          </div>
+          <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+            {error && (
+              <div className="px-3 py-2 bg-rose-950/50 border border-rose-500/20 rounded-md text-xs text-rose-400 font-mono">
+                {error}
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Name</label>
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                placeholder="Display name"
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-mono placeholder:text-gray-600" />
+            </div>
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="user@example.com"
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-mono placeholder:text-gray-600" />
+            </div>
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Role</label>
+              <select value={role} onChange={(e) => setRole(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-mono">
+                <option value="user">User</option>
+                {viewerIsSuperAdmin && <option value="admin">Admin</option>}
+              </select>
+              {!viewerIsSuperAdmin && (
+                <p className="mt-1 text-[10px] text-gray-600 font-mono">Only the Super Admin can create Admin accounts.</p>
+              )}
+            </div>
+            <div className="pt-2 border-t border-white/5 space-y-3">
+              <p className="text-[10px] font-mono uppercase tracking-wider text-gray-500">Set Password</p>
+              <div>
+                <label className="block text-xs font-mono text-gray-400 mb-1">Password</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-mono placeholder:text-gray-600" />
+              </div>
+              <div>
+                <label className="block text-xs font-mono text-gray-400 mb-1">Confirm Password</label>
+                <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+                  className={`w-full px-3 py-2 bg-black border rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 font-mono ${
+                    confirmPassword && password !== confirmPassword
+                      ? 'border-rose-500/50 focus:ring-rose-500'
+                      : 'border-white/10 focus:ring-emerald-500 focus:border-emerald-500'
+                  }`} />
+                {confirmPassword && password !== confirmPassword && (
+                  <p className="mt-1 text-[10px] text-rose-400 font-mono">Passwords do not match.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="px-5 py-4 border-t border-white/5 flex items-center justify-end gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs font-mono text-gray-400 hover:text-white hover:bg-white/5 rounded-md transition-colors">Cancel</button>
+            <button onClick={() => createMutation.mutate()} disabled={createMutation.isPending}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-colors disabled:opacity-50">
+              {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+              Create User
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Admin Page ────────────────────────────────────────────────────────────────
 
 export default function Admin() {
@@ -175,6 +360,7 @@ export default function Admin() {
   const queryClient = useQueryClient();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [addingUser, setAddingUser] = useState(false);
 
   // ── Workspace Settings state ──────────────────────────────────────────────
   const [wsForm, setWsForm] = useState<WorkspaceSettings>({});
@@ -200,6 +386,8 @@ export default function Admin() {
       return res.json();
     },
   });
+
+  const viewerIsSuperAdmin = users?.find(x => x.id === currentUser?.id)?.isSuperAdmin === 1;
 
   // Fetch workspace (global) settings
   useQuery<WorkspaceSettings>({
@@ -298,7 +486,7 @@ export default function Admin() {
           <ShieldAlert className="w-5 h-5 text-amber-400" />
         </div>
         <div>
-          <h1 className="text-lg font-bold text-white font-mono tracking-wide">Admin Console</h1>
+          <h1 className="text-lg font-bold text-white font-mono tracking-wide">Admin Panel</h1>
           <p className="text-xs text-gray-500 font-mono">System overview, user governance & workspace settings</p>
         </div>
       </div>
@@ -328,7 +516,16 @@ export default function Admin() {
             <Users className="w-3.5 h-3.5 text-cyan-500" />
             User Management
           </span>
-          <span className="text-[10px] text-gray-600 font-mono">{users?.length ?? 0} users</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-gray-600 font-mono">{users?.length ?? 0} users</span>
+            <button
+              onClick={() => setAddingUser(true)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/20 rounded transition-colors text-[10px] font-mono font-bold uppercase tracking-wider"
+            >
+              <UserPlus className="w-3 h-3" />
+              Add User
+            </button>
+          </div>
         </div>
         {usersLoading ? (
           <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
@@ -351,6 +548,9 @@ export default function Admin() {
                 {users.map((u) => {
                   const isSelf = u.id === currentUser?.id;
                   const isConfirming = confirmDeleteId === u.id;
+                  const targetIsAdmin = u.role === 'admin';
+                  // King can act on everyone except themselves; standard admin blocked from other admins
+                  const canActOnTarget = !isSelf && (viewerIsSuperAdmin || !targetIsAdmin);
                   return (
                     <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
                       <td className="px-4 py-3">
@@ -366,9 +566,16 @@ export default function Admin() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400 font-mono">{u.email}</td>
                       <td className="px-4 py-3">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono uppercase tracking-wider ${
-                          u.role === 'admin' ? 'bg-amber-950/50 text-amber-400 border border-amber-500/30' : 'bg-blue-950/50 text-blue-400 border border-blue-500/30'
-                        }`}>{u.role}</span>
+                        {u.isSuperAdmin === 1 ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold font-mono uppercase tracking-wider bg-amber-950/50 text-amber-400 border border-amber-500/30">
+                            <Crown className="w-3 h-3" />
+                            Super Admin
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono uppercase tracking-wider ${
+                            u.role === 'admin' ? 'bg-amber-950/50 text-amber-400 border border-amber-500/30' : 'bg-blue-950/50 text-blue-400 border border-blue-500/30'
+                          }`}>{u.role}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 font-mono">{timeAgo(u.lastActive)}</td>
                       <td className="px-4 py-3 text-xs text-gray-500 font-mono">{new Date(u.createdAt).toLocaleDateString()}</td>
@@ -384,11 +591,29 @@ export default function Admin() {
                           </div>
                         ) : (
                           <div className="flex items-center gap-1 justify-end">
-                            <button onClick={() => setEditingUser(u)} className="p-1.5 rounded hover:bg-cyan-950/30 text-gray-500 hover:text-cyan-400 transition-colors" title="Edit user">
+                            <button
+                              onClick={() => canActOnTarget ? setEditingUser(u) : undefined}
+                              disabled={!canActOnTarget}
+                              className={`p-1.5 rounded transition-colors ${
+                                canActOnTarget
+                                  ? 'hover:bg-cyan-950/30 text-gray-500 hover:text-cyan-400 cursor-pointer'
+                                  : 'text-gray-700 cursor-not-allowed opacity-40'
+                              }`}
+                              title={canActOnTarget ? 'Edit user' : 'You do not have permission to modify another Admin.'}
+                            >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             {!isSelf && (
-                              <button onClick={() => setConfirmDeleteId(u.id)} className="p-1.5 rounded hover:bg-rose-950/30 text-gray-500 hover:text-rose-400 transition-colors" title="Delete user">
+                              <button
+                                onClick={() => canActOnTarget ? setConfirmDeleteId(u.id) : undefined}
+                                disabled={!canActOnTarget}
+                                className={`p-1.5 rounded transition-colors ${
+                                  canActOnTarget
+                                    ? 'hover:bg-rose-950/30 text-gray-500 hover:text-rose-400 cursor-pointer'
+                                    : 'text-gray-700 cursor-not-allowed opacity-40'
+                                }`}
+                                title={canActOnTarget ? 'Delete user' : 'You do not have permission to modify another Admin.'}
+                              >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -545,6 +770,18 @@ export default function Admin() {
           user={editingUser}
           currentUserId={currentUser.id}
           onClose={() => setEditingUser(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+            queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+          }}
+        />
+      )}
+
+      {/* Add User Modal */}
+      {addingUser && (
+        <AddUserModal
+          viewerIsSuperAdmin={viewerIsSuperAdmin || false}
+          onClose={() => setAddingUser(false)}
           onSaved={() => {
             queryClient.invalidateQueries({ queryKey: ['admin-users'] });
             queryClient.invalidateQueries({ queryKey: ['admin-stats'] });

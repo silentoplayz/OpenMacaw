@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useReducer } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Loader2, ShieldCheck, Shield, Check, Copy, AlertTriangle, X, Wrench, ChevronDown, ChevronUp, Zap, Bot, GripVertical, Flag, Plus } from 'lucide-react';
+import { Trash2, Loader2, Bird, Check, Copy, AlertTriangle, X, Wrench, ChevronDown, ChevronUp, Zap, Bot, GripVertical, Flag, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch, getWsUrl, type AgentEvent } from '../api';
@@ -1760,15 +1760,15 @@ export default function Chat() {
               onClick={() => dispatch({ type: 'TOGGLE_GUARDIAN' })}
               className="flex items-center gap-2 cursor-pointer hover:bg-white/5 px-2 py-1 rounded transition-colors group relative"
             >
-              <ShieldCheck className="w-4 h-4 text-cyan-500 group-hover:shadow-[0_0_12px_rgba(6,182,212,0.6)] rounded-full transition-shadow" />
-              <span className="text-xs text-cyan-500 font-mono tracking-wide uppercase hidden md:inline">Guardian Active</span>
+              <Bird className="w-4 h-4 text-cyan-500 group-hover:shadow-[0_0_12px_rgba(6,182,212,0.6)] rounded-full transition-shadow" />
+              <span className="text-xs text-cyan-500 font-mono tracking-wide uppercase hidden md:inline">Agent Active</span>
             </div>
 
             {showGuardianOverlay && (
               <div className="absolute top-12 right-4 w-72 bg-zinc-900/90 backdrop-blur-md border border-white/10 rounded-lg shadow-2xl p-4 z-50">
                 <h4 className="text-xs font-bold text-gray-300 mb-2 uppercase tracking-wider flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-cyan-500" />
-                  System Security Status
+                  <Bird className="w-4 h-4 text-cyan-500" />
+                  Agent Status
                 </h4>
                 <div className="space-y-2 text-xs font-mono text-gray-400">
                   <div className="flex justify-between border-b border-white/5 pb-1">
@@ -1780,7 +1780,7 @@ export default function Chat() {
                     <span className="text-cyan-500">Enforced</span>
                   </div>
                   <div className="flex justify-between pb-1">
-                    <span>Active Shields</span>
+                    <span>Active Agents</span>
                     <span className="text-cyan-500">Enabled</span>
                   </div>
                 </div>
@@ -1818,7 +1818,7 @@ export default function Chat() {
                 {/* Hero */}
                 <div className="flex justify-center">
                   <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_40px_rgba(6,182,212,0.15)]">
-                    <Shield className="w-8 h-8 text-cyan-500" />
+                    <Bird className="w-8 h-8 text-cyan-500" />
                   </div>
                 </div>
                 <div>

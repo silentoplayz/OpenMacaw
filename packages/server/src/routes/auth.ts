@@ -40,6 +40,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     const role = isFirstUser ? 'admin' : 'user';
+    const isSuperAdmin = isFirstUser ? 1 : 0;
     const passwordHash = await bcrypt.hash(password, 10);
     const id = nanoid();
 
@@ -49,11 +50,12 @@ export async function authRoutes(fastify: FastifyInstance) {
       email,
       passwordHash,
       role,
+      isSuperAdmin,
       createdAt: new Date(),
     });
 
-    const token = (fastify as any).jwt.sign({ id, email, role });
-    return { token, user: { id, name, email, role } };
+    const token = (fastify as any).jwt.sign({ id, email, role, isSuperAdmin });
+    return { token, user: { id, name, email, role, isSuperAdmin } };
   });
 
   fastify.post('/api/auth/login', async (request, reply) => {
@@ -78,7 +80,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Update last_active timestamp
     await db.update(schema.users).set({ lastActive: new Date() }).where(eq(schema.users.id, user.id));
 
-    const token = (fastify as any).jwt.sign({ id: user.id, email: user.email, role: user.role });
-    return { token, user: { id: user.id, name: user.name, email: user.email, role: user.role } };
+    const token = (fastify as any).jwt.sign({ id: user.id, email: user.email, role: user.role, isSuperAdmin: user.isSuperAdmin });
+    return { token, user: { id: user.id, name: user.name, email: user.email, role: user.role, isSuperAdmin: user.isSuperAdmin } };
   });
 }

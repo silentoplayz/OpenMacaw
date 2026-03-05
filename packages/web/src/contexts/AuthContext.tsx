@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { apiFetch } from '../api';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   role: string;
+  isSuperAdmin?: number;
 }
 
 interface AuthContextType {
@@ -13,6 +15,7 @@ interface AuthContextType {
   user: User | null;
   login: (token: string, user: User) => void;
   logout: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,8 +41,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('openmacaw_user');
   };
 
+  const refreshUser = async () => {
+    const currentToken = localStorage.getItem('openmacaw_token');
+    if (!currentToken) return;
+    try {
+      const res = await apiFetch('/api/auth/me');
+      if (res.ok) {
+        const freshUser: User = await res.json();
+        setUser(freshUser);
+        localStorage.setItem('openmacaw_user', JSON.stringify(freshUser));
+      }
+    } catch {
+      // Silently ignore refresh errors — session will expire naturally
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ token, user, login, logout }}>
+    <AuthContext.Provider value={{ token, user, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
