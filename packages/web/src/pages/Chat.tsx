@@ -1639,9 +1639,18 @@ export default function Chat() {
       if (!sid) {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
-        // Navigation or state update happens in onSuccess of mutateAsync usually, 
-        // but here we need it IMMEDIATELY for the socket join.
       }
+
+      // ── Optimistic Update ──────────────────────────────────────────────────
+      // Inject the user message into the cache immediately so it appears instantly.
+      const tempId = `temp-${Date.now()}`;
+      queryClient.setQueryData(['session', sid], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          messages: [...(old.messages || []), { id: tempId, role: 'user', content: msg }]
+        };
+      });
 
       // Deterministically wait for the socket to be OPEN — no timeout guesses.
       // If the existing socket is not open, close it first (prevents orphaned sockets).
@@ -1683,6 +1692,16 @@ export default function Chat() {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
       }
+
+      // ── Optimistic Update ──────────────────────────────────────────────────
+      const tempId = `temp-${Date.now()}`;
+      queryClient.setQueryData(['session', sid], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          messages: [...(old.messages || []), { id: tempId, role: 'user', content: prompt }]
+        };
+      });
 
       // Deterministically wait for the socket to be OPEN — no timeout guesses.
       // If the existing socket is not open, close it first (prevents orphaned sockets).
@@ -1826,20 +1845,26 @@ export default function Chat() {
                   <p className="text-sm text-cyan-400 mt-2 font-mono">The Universal Guardian Agent.</p>
                 </div>
 
-                {/* Quick Actions */}
-                <div className="grid gap-2">
+                {/* Quick Actions Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
                   {[
-                    { label: 'Audit my current directory', emoji: '🔍' },
-                    { label: 'Review my active security permissions', emoji: '🛡️' },
-                    { label: 'Check system health', emoji: '💻' },
+                    { label: 'Audit Directory', sub: 'Scan for security vulnerabilities', emoji: '🔍' },
+                    { label: 'System Health', sub: 'Check CPU and memory status', emoji: '💻' },
+                    { label: 'Security Review', sub: 'Analyze active server permissions', emoji: '🛡️' },
+                    { label: 'Code Assistant', sub: 'Write a Python script or debug', emoji: '📝' },
+                    { label: 'Shell Command', sub: 'Run a safe terminal command', emoji: '🐚' },
+                    { label: 'Knowledge Discovery', sub: 'Explain a technical concept', emoji: '🧠' },
                   ].map((action) => (
                     <button
                       key={action.label}
                       onClick={() => sendQuickAction(action.label)}
-                      className="flex items-center gap-3 px-4 py-3 bg-white/5 border border-white/5 rounded-lg text-left hover:bg-white/10 hover:border-cyan-500/20 transition-all group cursor-pointer"
+                      className="flex items-center gap-4 px-4 py-3 bg-zinc-900/50 border border-white/5 rounded-xl text-left hover:bg-white/5 hover:border-cyan-500/30 transition-all group cursor-pointer shadow-sm"
                     >
-                      <span className="text-lg">{action.emoji}</span>
-                      <span className="text-sm text-gray-400 group-hover:text-gray-200 transition-colors">{action.label}</span>
+                      <span className="text-xl shrink-0 brightness-90 group-hover:brightness-110 transition-all">{action.emoji}</span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors truncate">{action.label}</span>
+                        <span className="text-[10px] text-gray-500 font-mono group-hover:text-gray-400 transition-colors truncate">{action.sub}</span>
+                      </div>
                     </button>
                   ))}
                 </div>
