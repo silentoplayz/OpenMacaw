@@ -158,6 +158,19 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ success: true });
   });
 
+  // Delete ALL custom settings for the current user
+  fastify.delete('/api/user/settings', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    if (!user?.id) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+
+    const db = getDb();
+    db.delete('user_settings' as any).where((col: (k: string) => any) => col('userId') === user.id);
+    
+    return reply.send({ success: true, allCleared: true });
+  });
+
   // ── User Profile (Direct users table updates) ───────────────────────────────
   fastify.put('/api/user/profile', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;

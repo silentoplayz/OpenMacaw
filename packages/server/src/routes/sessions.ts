@@ -82,6 +82,17 @@ export async function sessionsRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ success: true });
   });
 
+  // Delete ALL sessions for the current user
+  fastify.delete('/api/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
+    const userId = (request as any).user.id;
+    const db = getDb();
+    
+    // Delete all sessions for this user. Messages will be cascade deleted by SQLite/Drizzle.
+    db.delete(schema.sessions as any).where((col: (k: string) => any) => col('userId') === userId);
+    
+    return reply.send({ success: true, allCleared: true });
+  });
+
   fastify.delete('/api/sessions/:id/messages', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params;
     const userId = (request as any).user.id;

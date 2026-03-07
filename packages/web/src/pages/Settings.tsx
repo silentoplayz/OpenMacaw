@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
-import { Save, Loader2, Cpu, Monitor, ToggleLeft, ToggleRight, Smartphone, Download, CheckCircle2, Bell, BellOff, Key, User as UserIcon, Upload } from 'lucide-react';
+import { Save, Loader2, Cpu, Monitor, ToggleLeft, ToggleRight, Smartphone, Download, CheckCircle2, Bell, BellOff, Key, User as UserIcon, Upload, Trash2, AlertTriangle, RefreshCcw, X } from 'lucide-react';
 import { apiFetch } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -39,6 +39,9 @@ export default function Settings() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarSuccess, setAvatarSuccess] = useState(false);
+  const [confirmingWipe, setConfirmingWipe] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [isWiping, setIsWiping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,6 +162,39 @@ export default function Settings() {
   const handleSave = () => {
     setSaveStatus('saving');
     saveMutation.mutate(formData);
+  };
+
+  const handleWipeHistory = async () => {
+    setIsWiping(true);
+    try {
+      const res = await apiFetch('/api/sessions', { method: 'DELETE' });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        setConfirmingWipe(false);
+        // Dispatch event for UI updates if necessary
+        window.dispatchEvent(new CustomEvent('openmacaw:sessions-cleared'));
+      }
+    } catch (err) {
+      console.error('Failed to wipe history', err);
+    } finally {
+      setIsWiping(false);
+    }
+  };
+
+  const handleResetPreferences = async () => {
+    setIsWiping(true);
+    try {
+      const res = await apiFetch('/api/user/settings', { method: 'DELETE' });
+      if (res.ok) {
+        await queryClient.invalidateQueries({ queryKey: ['user-settings'] });
+        setFormData({});
+        setConfirmingReset(false);
+      }
+    } catch (err) {
+      console.error('Failed to reset preferences', err);
+    } finally {
+      setIsWiping(false);
+    }
   };
 
   if (isLoading) {
@@ -308,13 +344,13 @@ export default function Settings() {
         </div>
 
         {/* ── App & Notifications (PWA) ──────────────────── */}
-        <div className={`${cardClass} md:col-span-2`}>
+        <div className={cardClass}>
           <div className="flex items-center gap-2 mb-5">
             <Smartphone className="w-4 h-4 text-cyan-500" />
             <h2 className="text-sm font-bold text-white uppercase tracking-wider">App & Notifications</h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
             {/* Install to home screen */}
             <div>
               <p className="text-xs font-medium text-gray-400 mb-2">Install as App</p>
@@ -384,7 +420,90 @@ export default function Settings() {
             </div>
           </div>
         </div>
+
+        {/* ── Danger Zone ───────────────────────────────── */}
+        <div className="bg-zinc-950 border border-rose-500/20 rounded-xl p-6 md:col-span-2">
+          <div className="flex items-center gap-2 mb-5">
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+            <h2 className="text-sm font-bold text-rose-400 uppercase tracking-wider">Danger Zone</h2>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="flex flex-col justify-between">
+              <div>
+                <h3 className="text-white text-sm font-medium mb-1">Clear Chat History</h3>
+                <p className="text-[10px] text-gray-500 font-mono leading-relaxed mb-4">
+                  Permanently delete all your conversations and messages. This action cannot be undone.
+                </p>
+              </div>
+              <button 
+                onClick={() => setConfirmingWipe(true)}
+                className="w-fit flex items-center gap-2 px-4 py-2 bg-rose-600/10 hover:bg-rose-600 text-rose-500 hover:text-white border border-rose-600/20 rounded-lg text-xs transition-all font-medium"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear All Conversations
+              </button>
+            </div>
+
+            <div className="flex flex-col justify-between">
+              <div>
+                <h3 className="text-white text-sm font-medium mb-1">Reset All Preferences</h3>
+                <p className="text-[10px] text-gray-500 font-mono leading-relaxed mb-4">
+                  Wipe all custom API keys and interface settings. Your account will return to server defaults.
+                </p>
+              </div>
+              <button 
+                onClick={() => setConfirmingReset(true)}
+                className="w-fit flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-orange-600/20 text-gray-400 hover:text-orange-500 border border-white/5 hover:border-orange-500/30 rounded-lg text-xs transition-all font-medium"
+              >
+                <RefreshCcw className="w-3.5 h-3.5" />
+                Reset Preferences
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Confirmation Modals */}
+      {(confirmingWipe || confirmingReset) && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+            onClick={() => { setConfirmingWipe(false); setConfirmingReset(false); }}
+          />
+          <div className="relative bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${confirmingWipe ? 'bg-rose-500/20 text-rose-500' : 'bg-orange-500/20 text-orange-500'}`}>
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            
+            <h3 className="text-lg font-bold text-white mb-2">
+              {confirmingWipe ? 'Wipe all history?' : 'Reset all preferences?'}
+            </h3>
+            <p className="text-sm text-gray-400 mb-6 font-mono leading-relaxed">
+              {confirmingWipe 
+                ? 'This will permanently delete every conversation you have ever had on this platform. This is irreversible.' 
+                : 'This will erase your personal API keys and custom UI settings. You will need to re-configure them manually.'}
+            </p>
+
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => { setConfirmingWipe(false); setConfirmingReset(false); }}
+                disabled={isWiping}
+                className="flex-1 py-2 text-sm font-medium text-gray-400 hover:text-white bg-zinc-800 rounded-lg transition-colors border border-white/5"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmingWipe ? handleWipeHistory : handleResetPreferences}
+                disabled={isWiping}
+                className={`flex-1 py-2 text-sm font-medium text-white rounded-lg transition-all flex items-center justify-center gap-2 ${confirmingWipe ? 'bg-rose-600 hover:bg-rose-500' : 'bg-orange-600 hover:bg-orange-500'}`}
+              >
+                {isWiping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
