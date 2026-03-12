@@ -26,8 +26,10 @@ export interface PermissionResult {
  * Returns true if the given IP address is in a private/loopback/link-local
  * range that should never be reachable via an agent-initiated web fetch.
  * Covers IPv4 RFC-1918, loopback, link-local, and IPv6 loopback/ULA.
+ *
+ * Exported for unit testing.
  */
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   // IPv4
   const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (v4) {
@@ -172,8 +174,10 @@ function resolveIncomingPath(p: string): string {
  *   parent=/home/user/project, child=/home/user/project-other → FALSE
  *   parent=/home/user/project, child=/home/user/project/src   → TRUE
  *   parent=/home/user/project, child=/home/user/project       → TRUE
+ *
+ * Exported for unit testing.
  */
-function isPathUnder(child: string, parent: string): boolean {
+export function isPathUnder(child: string, parent: string): boolean {
   // Wildcard: '/' trusts everything
   if (parent === '/') return true;
   const rel = relativePath(parent, child);
