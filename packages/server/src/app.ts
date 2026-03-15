@@ -13,6 +13,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import fastifyJwt from '@fastify/jwt';
 import fastifyMultipart from '@fastify/multipart';
 import { existsSync, readFileSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { getDrizzleDb } from './db/index.js';
@@ -39,6 +40,23 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/**
+ * Resolve the JWT signing secret.
+ * - Production: requires an explicit JWT_SECRET env var; refuses to start without one.
+ * - Development: falls back to a random per-run secret (sessions won't survive restarts).
+ */
+function getJwtSecret(): string {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    console.error('FATAL: JWT_SECRET environment variable is required in production.');
+    console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+    process.exit(1);
+  }
+  const devSecret = randomBytes(32).toString('hex');
+  console.warn('WARNING: No JWT_SECRET set — using random ephemeral secret (sessions will not survive restarts).');
+  return devSecret;
+}
+
 export async function buildApp() {
   loadConfig();
 
@@ -49,9 +67,11 @@ export async function buildApp() {
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
   });
-  await fastify.register(fastifyWebsocket);
+  await fastify.register(fastifyWebsocket, {
+    options: { maxPayload: 1_048_576 }, // 1MB — prevent memory exhaustion from oversized messages
+  });
   await fastify.register(fastifyJwt, {
-    secret: process.env.JWT_SECRET || 'super-secret-openmacaw-key-change-me'
+    secret: getJwtSecret(),
   });
   await fastify.register(fastifyMultipart, {
     limits: {

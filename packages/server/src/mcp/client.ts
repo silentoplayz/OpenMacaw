@@ -4,6 +4,7 @@ import { type JSONRPCMessage, ListToolsResultSchema, CallToolResultSchema } from
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { Transform } from 'node:stream';
 import type { ToolDefinition } from '../llm/provider.js';
+import { sanitizeToolDescription, sanitizeToolSchema } from './toolSanitizer.js';
 
 export interface MCPClientOptions {
   command: string;
@@ -154,9 +155,22 @@ export class MCPClient {
   private connected = false;
 
   async connect(options: MCPClientOptions): Promise<void> {
-    // ── Env: clear stale npm auth tokens for npx invocations ──────────────
+    // ── Env: construct a minimal environment for the child process ─────────
+    // SECURITY: Never spread process.env — it leaks ANTHROPIC_API_KEY, JWT_SECRET,
+    // DATABASE_URL, and other host secrets to every MCP server process.
+    // Only forward essential system vars + the server's declared envVars.
+    const SAFE_SYSTEM_VARS = [
+      'PATH', 'HOME', 'NODE_PATH', 'LANG', 'TERM', 'SHELL', 'USER',
+      'TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR', 'XDG_DATA_HOME',
+      'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
+    ];
+    const systemEnv: Record<string, string> = {};
+    for (const key of SAFE_SYSTEM_VARS) {
+      if (process.env[key]) systemEnv[key] = process.env[key]!;
+    }
+
+    // Clear stale npm auth tokens for npx invocations.
     // On some Linux setups, ~/.npmrc has an expired token that blocks downloads.
-    // Setting these env vars to empty values overrides it without touching files.
     const baseEnv: Record<string, string> = {};
     const cmd = options.command.trim();
     if (cmd === 'npx' || cmd.endsWith('/npx')) {
@@ -165,7 +179,7 @@ export class MCPClient {
       baseEnv.npm_config_registry = 'https://registry.npmjs.org/';
     }
     const env = {
-      ...(process.env as Record<string, string>),
+      ...systemEnv,
       ...baseEnv,
       ...options.envVars,   // user vars always win
     };
@@ -282,8 +296,8 @@ export class MCPClient {
       );
       this.tools = ((response as { tools?: { name: string; description?: string; inputSchema: unknown }[] }).tools || []).map(tool => ({
         name: tool.name,
-        description: tool.description || '',
-        inputSchema: tool.inputSchema as Record<string, unknown>,
+        description: sanitizeToolDescription(tool.description || ''),
+        inputSchema: sanitizeToolSchema((tool.inputSchema || {}) as Record<string, unknown>),
       }));
     } catch (e) {
       console.error('Failed to load tools from MCP:', e);

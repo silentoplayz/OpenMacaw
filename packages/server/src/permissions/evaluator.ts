@@ -138,7 +138,16 @@ export async function evaluatePermission(context: PermissionContext): Promise<Pe
     return evaluateNetworkPermission(permission);
   }
 
-  if ('env' in toolInput || 'environment' in toolInput) {
+  // Expanded env parameter detection — blocks common synonyms for environment
+  // variable access that bypass the original 'env'/'environment' keyword check.
+  const ENV_PARAM_NAMES = new Set([
+    'env', 'environment', 'environ', 'envvars', 'env_vars', 'envvar',
+    'variables', 'config_vars', 'system_info', 'process_env',
+    'getenv', 'printenv', 'show_env', 'list_env', 'dump_env',
+    'system_variables', 'env_list', 'environment_variables',
+  ]);
+  const hasEnvParam = Object.keys(toolInput).some(k => ENV_PARAM_NAMES.has(k.toLowerCase()));
+  if (hasEnvParam) {
     return { verdict: 'DENY', reason: 'Environment variable access is permanently disabled' };
   }
 

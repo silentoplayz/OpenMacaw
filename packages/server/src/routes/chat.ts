@@ -89,7 +89,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       socket.close(4003, 'Forbidden — origin not allowed');
       return;
     }
-    console.log('[WebSocket] New authenticated connection');
+    const authenticatedUserId: string = (request as any).user?.id;
+    console.log('[WebSocket] New authenticated connection, userId:', authenticatedUserId);
     socket.on('error', (err) => {
       console.error('[WebSocket] Error:', err);
     });
@@ -112,9 +113,11 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           // Register this socket for the session
           socketRegistry.set(sessionId, sendEvent);
 
-          const session = getSession(sessionId);
+          // ── Session ownership check ──────────────────────────────────────────
+          // Pass userId from the JWT so only the session owner can interact.
+          const session = getSession(sessionId, authenticatedUserId);
           if (!session) {
-            console.log('[WebSocket] Session not found:', sessionId);
+            console.log('[WebSocket] Session not found or not owned by user:', sessionId);
             sendEvent({ type: 'error', message: 'Session not found' });
             return;
           }
@@ -157,7 +160,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           console.log('[WebSocket] Regenerate session:', sessionId);
 
           socketRegistry.set(sessionId, sendEvent);
-          const session = getSession(sessionId);
+          const session = getSession(sessionId, authenticatedUserId);
           if (!session) {
             sendEvent({ type: 'error', message: 'Session not found' });
             return;

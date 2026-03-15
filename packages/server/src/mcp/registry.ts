@@ -121,6 +121,16 @@ export function getServerTools(id: string): ToolDefinition[] {
   return server.client.getTools();
 }
 
+/**
+ * Look up a tool definition by server ID and bare tool name.
+ * Returns undefined if the server or tool is not found.
+ */
+export function getToolDefinition(serverId: string, toolName: string): ToolDefinition | undefined {
+  const server = servers.get(serverId);
+  if (!server || !server.client.isConnected()) return undefined;
+  return server.client.getTools().find(t => t.name === toolName);
+}
+
 export function getAllTools(): ToolDefinition[] {
   const allTools: ToolDefinition[] = [];
   for (const [, server] of servers) {

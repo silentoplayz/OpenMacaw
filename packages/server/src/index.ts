@@ -21,8 +21,10 @@ async function start() {
 
     const app = await buildApp();
 
-    await app.listen({ port: parseInt(process.env.PORT || '3000'), host: '0.0.0.0' });
-    console.log(`\nOpenMacaw running at http://0.0.0.0:${process.env.PORT || '3000'}\n`);
+    const host = process.env.HOST || (process.env.DOCKER ? '0.0.0.0' : '127.0.0.1');
+    const port = parseInt(process.env.PORT || '3000');
+    await app.listen({ port, host });
+    console.log(`\nOpenMacaw running at http://${host}:${port}\n`);
 
     // Async trigger MCP auto-reconnection in the background
     // without blocking the main Fastify loop
