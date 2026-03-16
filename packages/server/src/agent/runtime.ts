@@ -1,8 +1,10 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
 import { buildSystemPrompt } from './prompts.js';
 import { looksLikeHallucinatedAction } from '../llm/ollama.js';
-import { getAllTools, findServerIdForTool, getMCPServer } from '../mcp/registry.js';
+import { getAllTools, findServerIdForTool, getMCPServer, getToolDefinition } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
+import { scanAndRedactSecrets, scanToolArgsForSecrets } from '../permissions/secretScanner.js';
+import { validateToolCallArgs } from '../mcp/toolSanitizer.js';
 import { getConfig } from '../config.js';
 import { getDrizzleDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
@@ -523,17 +525,58 @@ export class AgentRuntime {
       }
     }
 
+    // ── Fix 5: Validate tool call args against declared schema ──────────────
+    const toolDef = getToolDefinition(serverId, toolName);
+    if (toolDef) {
+      const schemaCheck = validateToolCallArgs(toolCall.input, toolDef.inputSchema);
+      if (!schemaCheck.valid) {
+        const reason = `Tool call contains undeclared parameters: ${schemaCheck.unexpectedKeys.join(', ')}. Possible exfiltration attempt.`;
+        console.warn('[Agent] Schema validation failed:', reason);
+        this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+        await this.logActivity(serverId, toolName, toolCall.input, 'denied', reason);
+        const denyContent = `Tool call denied: ${reason}`;
+        this.messages.push({ role: 'tool', content: denyContent, toolCallId: toolCall.id, toolName });
+        await this.saveMessage('tool', denyContent, undefined, undefined, toolCall.id);
+        return false;
+      }
+    }
+
+    // ── Fix 4: Scan outbound tool args for leaked secrets ─────────────────
+    const OUTBOUND_TOOL_PATTERNS = [
+      'webfetch', 'fetch', 'http_request', 'send_message', 'send_email',
+      'post', 'slack_post', 'webhook', 'notify', 'upload',
+    ];
+    const lowerToolName = toolName.toLowerCase();
+    const isOutbound = OUTBOUND_TOOL_PATTERNS.some(p => lowerToolName.includes(p));
+    if (isOutbound && scanToolArgsForSecrets(toolCall.input)) {
+      const reason = 'Potential secret exfiltration detected in outbound tool arguments';
+      console.warn('[Agent] Outbound secret scan blocked:', toolName);
+      this.eventHandler({ type: 'tool_call_result', outcome: 'denied', reason });
+      await this.logActivity(serverId, toolName, toolCall.input, 'denied', reason);
+      const denyContent = `Tool call denied: ${reason}`;
+      this.messages.push({ role: 'tool', content: denyContent, toolCallId: toolCall.id, toolName });
+      await this.saveMessage('tool', denyContent, undefined, undefined, toolCall.id);
+      return false;
+    }
+
     const startTime = Date.now();
     try {
       const result = await server.client.callTool(toolName, toolCall.input);
       const latency = Date.now() - startTime;
       const resultStr = JSON.stringify(result);
 
+      // ── Fix 3: Scan tool results for leaked secrets before LLM injection ──
+      const secretScan = scanAndRedactSecrets(resultStr);
+      if (secretScan.found) {
+        console.warn(`[Agent] Redacted ${secretScan.count} secret(s) from tool result of ${toolName}`);
+      }
+      const safeResultStr = secretScan.found ? secretScan.redacted : resultStr;
+
       console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
       this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
       await this.logActivity(serverId, toolName, toolCall.input, silent ? 'auto_approved' : 'allowed', undefined, latency);
 
-      const toolResultContent = `Tool result: ${resultStr}`;
+      const toolResultContent = `Tool result: ${safeResultStr}`;
       this.messages.push({
         role: 'tool',
         content: toolResultContent,

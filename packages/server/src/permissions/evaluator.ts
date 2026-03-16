@@ -26,8 +26,10 @@ export interface PermissionResult {
  * Returns true if the given IP address is in a private/loopback/link-local
  * range that should never be reachable via an agent-initiated web fetch.
  * Covers IPv4 RFC-1918, loopback, link-local, and IPv6 loopback/ULA.
+ *
+ * Exported for unit testing.
  */
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   // IPv4
   const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (v4) {
@@ -136,7 +138,16 @@ export async function evaluatePermission(context: PermissionContext): Promise<Pe
     return evaluateNetworkPermission(permission);
   }
 
-  if ('env' in toolInput || 'environment' in toolInput) {
+  // Expanded env parameter detection — blocks common synonyms for environment
+  // variable access that bypass the original 'env'/'environment' keyword check.
+  const ENV_PARAM_NAMES = new Set([
+    'env', 'environment', 'environ', 'envvars', 'env_vars', 'envvar',
+    'variables', 'config_vars', 'system_info', 'process_env',
+    'getenv', 'printenv', 'show_env', 'list_env', 'dump_env',
+    'system_variables', 'env_list', 'environment_variables',
+  ]);
+  const hasEnvParam = Object.keys(toolInput).some(k => ENV_PARAM_NAMES.has(k.toLowerCase()));
+  if (hasEnvParam) {
     return { verdict: 'DENY', reason: 'Environment variable access is permanently disabled' };
   }
 
@@ -172,8 +183,10 @@ function resolveIncomingPath(p: string): string {
  *   parent=/home/user/project, child=/home/user/project-other → FALSE
  *   parent=/home/user/project, child=/home/user/project/src   → TRUE
  *   parent=/home/user/project, child=/home/user/project       → TRUE
+ *
+ * Exported for unit testing.
  */
-function isPathUnder(child: string, parent: string): boolean {
+export function isPathUnder(child: string, parent: string): boolean {
   // Wildcard: '/' trusts everything
   if (parent === '/') return true;
   const rel = relativePath(parent, child);

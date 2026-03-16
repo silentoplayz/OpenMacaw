@@ -77,7 +77,8 @@ Based on a full codebase audit (March 2026). Items marked 🔴 are high priority
 
 ## 🔒 Security
 
-> Cross-referenced against OpenClaw CVEs (2026). Status: ✅ = mitigated, ⚠️ = partial/gap, 🔴 = not mitigated.
+> Cross-referenced against OpenClaw CVEs (2026) **and** Invariant Labs MCP Tool Poisoning research (Apr 2025), MCP Safety Audit paper (arXiv:2504.03767), and MCP-Scan vulnerability categories.
+> Status: ✅ = mitigated, ⚠️ = partial/gap, 🔴 = not mitigated.
 
 ### 🔴 WebSocket Authentication Missing (analog: CVE-2026-25253 "ClawJacked")
 OpenClaw's critical ClawJacked flaw was an unauthenticated WebSocket that trusted any local connection and reflected auth tokens. In OpenMacaw:
@@ -135,7 +136,54 @@ OpenClaw had browser-upload path traversal allowing writes outside intended dire
 - [ ] **Mask `isSecret` env var values** in Servers UI (show `••••••` instead of plaintext)
 - [x] **Remove all `[DEBUG]` console logs** before any public/production release (`auth.ts`, `chat.ts`) *(Done.)*
 - [ ] **Audit log tamper-evidence** — HMAC-sign log entries so they cannot be silently edited
-- [ ] **Tool poisoning defense** — strip or truncate excessively long tool `description` fields from MCP servers before injecting them into the LLM system prompt (tool metadata is an injection vector)
+- [x] **Tool poisoning defense** — strip or truncate excessively long tool `description` fields from MCP servers before injecting them into the LLM system prompt (tool metadata is an injection vector) *(Fixed: `toolSanitizer.ts` strips injection markers and caps descriptions at 2000 chars.)*
+
+### 🔴 MCP Tool Poisoning Attacks (Invariant Labs TPA — Apr 2025)
+> Invariant Labs demonstrated that malicious instructions hidden in MCP tool `description` fields are invisible to users but fully visible to the LLM. A poisoned `add` tool can instruct the LLM to read `~/.ssh/id_rsa` and exfiltrate it via a hidden parameter. This affects all MCP hosts (Cursor, Claude Desktop, OpenClaw, OpenMacaw).
+
+- [x] 🔴 **Tool descriptions injected into LLM context unsanitized** — `client.ts:loadTools()` stores descriptions verbatim; `anthropic.ts` and `openai.ts` pass `tool.description` directly to the provider API with **no length cap, no sanitization, no injection pattern stripping**. Implement: (a) hard length cap on descriptions (e.g. 2000 chars), (b) strip `<IMPORTANT>`, `[SYSTEM]`, `[INST]`, and other prompt injection markers from descriptions, (c) show full raw descriptions to the user in the Servers UI for manual review. *(Fixed: `toolSanitizer.ts` enforces 2000-char cap and strips 30+ injection marker patterns from descriptions and schemas.)*
+- [x] 🔴 **Tool input schemas not validated against advertised schema** — MCP tools can declare hidden parameters (e.g. `sidenote`) that the LLM fills with exfiltrated data. The permission evaluator does not inspect or restrict which parameters the LLM populates. Add a schema-enforcement layer that rejects tool calls with unexpected parameters not in the approved schema. *(Fixed: `validateToolCallArgs()` in `toolSanitizer.ts` rejects tool calls with undeclared parameters.)*
+- [ ] **No user visibility into full tool descriptions** — the Servers UI shows tool names but not the full raw descriptions that the LLM sees. Add a "View raw description" expander per tool so users can inspect for hidden instructions.
+
+### 🔴 MCP Rug Pulls / Tool Description Mutation (Invariant Labs — Apr 2025)
+> A malicious MCP server can initially advertise benign tool descriptions to pass user review, then silently change them on reconnect/restart to include poisoned instructions. No MCP host currently detects this.
+
+- [ ] 🔴 **No tool pinning or description hashing** — `client.ts:loadTools()` replaces the tool list in memory on every `connect()` call with no comparison to previously-approved versions. Implement: (a) SHA-256 hash each tool's `(name, description, inputSchema)` on first registration, (b) on reconnect, compare hashes and alert the user if any tool changed, (c) require explicit re-approval for changed tools before they become available to the agent.
+- [ ] **No `tools/list_changed` notification handling** — the MCP protocol supports server-initiated notifications when tools change. OpenMacaw does not listen for these. Implement the handler and trigger a re-hash + user alert.
+
+### 🔴 Cross-Server Tool Shadowing (Invariant Labs — Apr 2025)
+> A malicious MCP server can inject instructions in its tool description that override behavior of tools from *other* trusted servers, even if the malicious tool is never called directly.
+
+- [ ] **Cross-server instruction isolation** — tool descriptions from one MCP server can reference and modify behavior of tools from another server. Add per-server instruction isolation: (a) prepend each tool description with `[Server: <name>]` context, (b) add system prompt instructions explicitly forbidding cross-server instruction following, (c) warn in the UI when a tool description mentions another server's tool names.
+- [ ] **Tool description cross-reference scanning** — scan new tool descriptions for references to other registered server names or tool names. Flag for user review if cross-references are detected.
+
+### 🔴 Credential Theft via process.env Leakage (MCP Safety Audit — arXiv:2504.03767)
+> The MCP Safety Audit paper demonstrated credential theft attacks where MCP tools (e.g. `printEnv` from the Everything server) expose environment variables containing API keys, and multi-server RADE attacks where stolen credentials are exfiltrated via Slack or web fetch tools.
+
+- [x] 🔴 **`process.env` spread to child MCP server processes** — `client.ts:168` passes `...(process.env as Record<string, string>)` to every spawned MCP server, exposing `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `JWT_SECRET`, `DATABASE_URL`, and all other host secrets to every MCP server process. **This completely undermines the env var access control.** Fix: construct a minimal env object containing only the server's declared `envVars` + essential system vars (`PATH`, `HOME`, `NODE_PATH`), never spread `process.env`. *(Fixed: now only forwards `PATH`, `HOME`, `NODE_PATH`, `LANG`, `TERM`, `SHELL`, `USER`, `TMPDIR`, `TMP`, `TEMP`, and XDG dirs + declared envVars.)*
+- [x] **`envReadAllowed` heuristic is trivially bypassable** — `evaluator.ts:141` only checks for `'env' in toolInput || 'environment' in toolInput`. A tool using parameter names like `variables`, `environ`, `envVars`, `config_vars`, or `system_info` bypasses this check entirely. Replace the keyword heuristic with a proper deny-by-default approach: inspect all tool results for patterns matching API key formats (`sk-ant-*`, `sk-*`, `hf_*`, `ghp_*`, `xoxb-*`, etc.). *(Fixed: expanded to 18 env-related parameter name synonyms with case-insensitive matching.)*
+
+### 🔴 Secret Exfiltration via Tool Results / Outbound Args (MCP Safety Audit — arXiv:2504.03767)
+> RADE (Retrieval-Agent Deception) attacks demonstrated end-to-end credential theft: a poisoned file is read by an MCP tool, its contents (including exfiltration instructions) are injected into the LLM context, the LLM then uses another tool (web fetch, Slack, email) to send the stolen data to the attacker.
+
+- [x] 🔴 **No scanning of tool results for leaked secrets** — tool results from MCP servers are passed directly into the LLM conversation context (`runtime.ts:536`) with no scanning for credential patterns. Implement a secret-detection scanner that checks all tool results for patterns matching known API key formats and redacts them before LLM injection. *(Fixed: `secretScanner.ts` scans and redacts 15+ credential patterns before injecting results into LLM context.)*
+- [x] 🔴 **No scanning of outbound tool call arguments for exfiltrated data** — the LLM can pass stolen credentials as arguments to web fetch, email, or messaging tools. Add an outbound argument scanner in the PermissionGuard that checks tool call arguments for credential-like patterns and blocks/flags the call. *(Fixed: outbound tools are scanned for credential patterns before execution; blocked if secrets detected.)*
+- [ ] **No data-flow taint tracking between servers** — data read by Server A's tools can be passed to Server B's tools without restriction. Implement per-server data boundaries: tag tool results with their source server ID and warn/block when data from one server flows to another server's outbound tools.
+
+### ⚠️ WebSocket Hardening Gaps
+- [x] **No `maxPayload` on WebSocket** — `app.ts:52` registers `@fastify/websocket` with no options; defaults to ~100MB `maxPayload`. Set `maxPayload: 1_048_576` (1MB) to prevent memory exhaustion from oversized messages. *(Fixed: `maxPayload: 1_048_576` set in `app.ts`.)*
+- [ ] **No WebSocket message rate throttling** — authenticated clients can flood the WebSocket with unlimited messages. Add per-connection message rate limiting (e.g. 10 messages/second).
+- [ ] **No CSRF token on WebSocket upgrade** — the Origin check provides partial protection, but a dedicated CSRF token (generated at page load, required as query param on WS upgrade) would add defense-in-depth.
+- [x] **WebSocket session ownership not enforced** — `chat.ts:115` calls `getSession(sessionId)` without `userId`, allowing any authenticated user to interact with any other user's session via WebSocket. Pass `userId` from the JWT payload and verify ownership. *(Fixed: `getSession(sessionId, authenticatedUserId)` now enforced on both `chat` and `regenerate` message types.)*
+
+### ⚠️ Network / Deployment Hardening
+- [x] **Bind host hardcoded to `0.0.0.0`** — `index.ts:24` binds to all interfaces with no override. Add `HOST` env var (default `127.0.0.1` for non-Docker, `0.0.0.0` for Docker). Document in docker-compose.yml. *(Fixed: uses `HOST` env var, defaults to `127.0.0.1` unless `DOCKER` env is set.)*
+- [x] **Hardcoded JWT secret fallback** — `app.ts:54` uses `'super-secret-openmacaw-key-change-me'` when `JWT_SECRET` is not set. In production this allows trivial token forgery. Generate a random secret on first run and persist it, or refuse to start without an explicit `JWT_SECRET`. *(Fixed: production refuses to start without `JWT_SECRET`; dev uses random ephemeral secret.)*
+
+### ⚠️ API Key / Secret Storage
+- [ ] **API keys stored as plaintext in SQLite** — `userSettings.value` and `settings.value` columns store ANTHROPIC_API_KEY, OPENAI_API_KEY as raw text. Implement AES-256-GCM encryption at rest (see `SECURITY_HARDENING.md` Section 8 for reference implementation).
+- [ ] **MCP server env vars stored as plaintext JSON** — `servers.env_vars` column stores sensitive values (API tokens, credentials) as plaintext JSON strings. Encrypt before storing; decrypt only when spawning the server process.
+- [ ] **API keys returned in REST API responses** — settings endpoints may return raw API key values. Redact secrets in API responses (return `sk-ant-****` instead of full key) except at the moment of initial save.
 
 ---
 
@@ -165,8 +213,11 @@ OpenClaw had browser-upload path traversal allowing writes outside intended dire
 
 ## 🧪 Testing
 
-- [ ] Unit tests for `PermissionGuard` evaluator (path traversal, glob matching, trust policy edge cases)
-- [ ] Integration tests for auth flows (register, login, rate limit, pending approval)
+- [x] Unit tests for `PermissionGuard` evaluator (path traversal, glob matching, trust policy edge cases) — 26 tests via Vitest
+- [x] Integration tests for auth flows (register, login, rate limit, pending approval) — 13 tests via Vitest
+- [x] Integration tests for WebSocket JWT auth & origin validation — 10 tests via Vitest
+- [x] Integration tests for HTTP security headers (CSP, X-Frame-Options, etc.) — 6 tests via Vitest
+- [x] Unit tests for command injection prevention (`validateCommand`, `normalizeArgs`) — 30 tests via Vitest
 - [ ] E2E test: start MCP server → chat message → tool call → approval → result
 - [ ] Pipeline integration tests (Discord, Telegram mocks)
 - [ ] Load test: WebSocket streaming under concurrent users
@@ -184,4 +235,4 @@ OpenClaw had browser-upload path traversal allowing writes outside intended dire
 
 ---
 
-*Last updated: March 2026*
+*Last updated: March 2026 — security section expanded with Invariant Labs TPA, MCP Safety Audit (arXiv:2504.03767), and full codebase audit findings*

@@ -25,15 +25,15 @@ const serverSchema = z.object({
 // Reject:
 // • Absolute paths to system binary directories (/bin/sh, /usr/bin/python, etc.)
 // • Shell metacharacters that could chain or inject additional commands
-const DANGEROUS_COMMAND_RE = new RegExp(
-  '(\\/(?:bin|sbin|usr\\/bin|usr\\/sbin|usr\\/local\\/bin)\\/|[;&|`]|\\$\\())'
-);
+const DANGEROUS_COMMAND_RE = /(?:\/(?:bin|sbin|usr\/bin|usr\/sbin|usr\/local\/bin)\/|[;&|`]|\$\()/;
 
 /**
  * Validates that a command string is safe to spawn. Returns an error string if
  * the command is dangerous, or null if it looks safe.
+ *
+ * Exported for unit testing.
  */
-function validateCommand(cmd: string | undefined): string | null {
+export function validateCommand(cmd: string | undefined): string | null {
   if (!cmd) return null; // No command = HTTP transport; validated elsewhere
   if (DANGEROUS_COMMAND_RE.test(cmd)) {
     return `Command contains disallowed pattern: "${cmd}". ` +
@@ -42,7 +42,8 @@ function validateCommand(cmd: string | undefined): string | null {
   return null;
 }
 
-function normalizeArgs(argsStr?: string): string | undefined {
+/** Exported for unit testing. */
+export function normalizeArgs(argsStr?: string): string | undefined {
   if (!argsStr || argsStr.trim() === '') return undefined;
   try {
     const parsed = JSON.parse(argsStr);
