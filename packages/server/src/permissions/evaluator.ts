@@ -92,6 +92,13 @@ const toolNameToType: Record<string, string> = {
   // SearXNG MCP server (mcp-server-searxng)
   searxng_search: 'webfetch',
   searxng: 'webfetch',
+  searxng_web_search: 'webfetch',
+  // URL reading / browsing
+  web_url_read: 'webfetch',
+  url_read: 'webfetch',
+  read_url: 'webfetch',
+  browse: 'webfetch',
+  browse_url: 'webfetch',
   // Subprocess / network meta
   subprocess: 'subprocess',
   spawn: 'subprocess',
@@ -151,7 +158,7 @@ export async function evaluatePermission(context: PermissionContext): Promise<Pe
     return { verdict: 'DENY', reason: 'Environment variable access is permanently disabled' };
   }
 
-  return { verdict: 'REQUIRE_APPROVAL' };
+  return permission.autoApproveAll ? { verdict: 'ALLOW_SILENT' } : { verdict: 'REQUIRE_APPROVAL' };
 }
 
 // ── Path utilities ────────────────────────────────────────────────────────────
@@ -242,7 +249,14 @@ function evaluateFilesystemPermission(
   // ── Trust Policy: ALLOW_SILENT check ────────────────────────────────────
   // Destructive tools can NEVER be silenced, regardless of trust policy
   if (DESTRUCTIVE_TOOLS.has(toolName)) {
-    return { verdict: 'REQUIRE_APPROVAL' };
+    return perm.autoApproveAll
+      ? { verdict: 'ALLOW_SILENT' }
+      : { verdict: 'REQUIRE_APPROVAL' };
+  }
+
+  // Auto-approve ALL: when enabled, every permitted tool call executes silently.
+  if (perm.autoApproveAll) {
+    return { verdict: 'ALLOW_SILENT' };
   }
 
   // Safe reads in a trusted path → execute without prompting.
@@ -282,7 +296,7 @@ function evaluateBashPermission(perm: ServerPermission, input: Record<string, un
     }
   }
 
-  return { verdict: 'REQUIRE_APPROVAL' };
+  return perm.autoApproveAll ? { verdict: 'ALLOW_SILENT' } : { verdict: 'REQUIRE_APPROVAL' };
 }
 
 async function evaluateWebfetchPermission(perm: ServerPermission, input: Record<string, unknown>): Promise<PermissionResult> {
@@ -327,21 +341,21 @@ async function evaluateWebfetchPermission(perm: ServerPermission, input: Record<
     }
   }
 
-  return { verdict: 'REQUIRE_APPROVAL' };
+  return perm.autoApproveAll ? { verdict: 'ALLOW_SILENT' } : { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateSubprocessPermission(perm: ServerPermission): PermissionResult {
   if (!perm.subprocessAllowed) {
     return { verdict: 'DENY', reason: 'Subprocess spawning is disabled for this server' };
   }
-  return { verdict: 'REQUIRE_APPROVAL' };
+  return perm.autoApproveAll ? { verdict: 'ALLOW_SILENT' } : { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function evaluateNetworkPermission(perm: ServerPermission): PermissionResult {
   if (!perm.networkAllowed) {
     return { verdict: 'DENY', reason: 'Network access is disabled for this server' };
   }
-  return { verdict: 'REQUIRE_APPROVAL' };
+  return perm.autoApproveAll ? { verdict: 'ALLOW_SILENT' } : { verdict: 'REQUIRE_APPROVAL' };
 }
 
 function matchesGlob(str: string, pattern: string): boolean {

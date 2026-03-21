@@ -24,6 +24,7 @@ export interface ServerPermission {
   // ── Trust Policy (Phase 46) ───────────────────────────────────────────────
   autoApproveReads: boolean;   // Auto-execute safe read tools in trusted paths
   trustedPaths: string[];      // Paths that are safe to auto-approve reads on
+  autoApproveAll: boolean;     // Auto-execute ALL permitted tool calls (skips Discord approval)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +59,7 @@ export function getPermissionForServer(serverId: string): ServerPermission | nul
     toolPromptInjectionPrevention: JSON.parse((perm as any).toolPromptInjectionPrevention ?? (perm as any).tool_prompt_injection_prevention ?? '{}'),
     autoApproveReads: Boolean((perm as any).autoApproveReads ?? (perm as any).auto_approve_reads ?? false),
     trustedPaths: JSON.parse((perm as any).trustedPaths ?? (perm as any).trusted_paths ?? '[]'),
+    autoApproveAll: Boolean((perm as any).autoApproveAll ?? (perm as any).auto_approve_all ?? false),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   };
@@ -90,12 +92,13 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     tool_prompt_injection_prevention: '{}',
     auto_approve_reads: 0,
     trusted_paths: JSON.stringify([]),
+    auto_approve_all: 0,
     created_at: now,
     updated_at: now,
   };
 
   db.insert(schema.permissions as any).values(perm);
-  
+
   return {
     ...perm,
     allowedPaths: ['/'],
@@ -119,6 +122,7 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     toolPromptInjectionPrevention: {},
     autoApproveReads: false,
     trustedPaths: [],
+    autoApproveAll: false,
   } as ServerPermission;
 }
 
@@ -149,6 +153,7 @@ export async function updatePermission(serverId: string, updates: Partial<Server
   }
   if (updates.autoApproveReads !== undefined) dbUpdates.auto_approve_reads = updates.autoApproveReads ? 1 : 0;
   if (updates.trustedPaths !== undefined) dbUpdates.trusted_paths = JSON.stringify(updates.trustedPaths);
+  if (updates.autoApproveAll !== undefined) dbUpdates.auto_approve_all = updates.autoApproveAll ? 1 : 0;
 
   db.update(schema.permissions as any).set(dbUpdates).where((getCol: (col: string) => unknown) => getCol('serverId') === serverId);
   
@@ -188,6 +193,7 @@ export function getAllPermissions(): ServerPermission[] {
     toolPromptInjectionPrevention: JSON.parse((perm as any).toolPromptInjectionPrevention ?? (perm as any).tool_prompt_injection_prevention ?? '{}'),
     autoApproveReads: Boolean((perm as any).autoApproveReads ?? (perm as any).auto_approve_reads ?? false),
     trustedPaths: JSON.parse((perm as any).trustedPaths ?? (perm as any).trusted_paths ?? '[]'),
+    autoApproveAll: Boolean((perm as any).autoApproveAll ?? (perm as any).auto_approve_all ?? false),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   }));

@@ -39,6 +39,7 @@ export async function permissionsRoutes(fastify: FastifyInstance): Promise<void>
     // ── Trust Policy (Phase 46) ────────────────────────────────────────────────
     if (typeof body.autoApproveReads === 'boolean') updates.autoApproveReads = body.autoApproveReads;
     if (Array.isArray(body.trustedPaths)) updates.trustedPaths = body.trustedPaths;
+    if (typeof body.autoApproveAll === 'boolean') updates.autoApproveAll = body.autoApproveAll;
     
     const updated = await updatePermission(serverId, updates as any);
     return reply.send(updated);

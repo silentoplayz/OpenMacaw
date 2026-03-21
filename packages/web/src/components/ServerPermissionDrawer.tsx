@@ -14,6 +14,7 @@ interface PermState {
   subprocessAllowed: boolean;
   autoApproveReads: boolean;
   trustedPaths: string[];
+  autoApproveAll: boolean;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ export function ServerPermissionDrawer({ serverId, onClose }: { serverId: string
         subprocessAllowed: Boolean(perm.subprocessAllowed),
         autoApproveReads: Boolean(perm.autoApproveReads),
         trustedPaths:   Array.isArray(perm.trustedPaths) ? perm.trustedPaths : [],
+        autoApproveAll: Boolean(perm.autoApproveAll),
       });
     }
   }, [perm, local]);
@@ -72,6 +74,7 @@ export function ServerPermissionDrawer({ serverId, onClose }: { serverId: string
         subprocessAllowed: Boolean(saved.subprocessAllowed),
         autoApproveReads: Boolean(saved.autoApproveReads),
         trustedPaths:   Array.isArray(saved.trustedPaths) ? saved.trustedPaths : [],
+        autoApproveAll: Boolean(saved.autoApproveAll),
       });
       setDirty(false);
       queryClient.invalidateQueries({ queryKey: ['permissions', serverId] });
@@ -182,6 +185,26 @@ export function ServerPermissionDrawer({ serverId, onClose }: { serverId: string
                   <Zap className="w-3 h-3 text-yellow-400" />
                   <p className="text-[10px] text-yellow-400 uppercase tracking-wider font-bold">Trust Policy</p>
                 </div>
+
+                {/* Auto-Approve All toggle */}
+                <button
+                  onClick={() => toggle('autoApproveAll')}
+                  className="w-full flex items-start justify-between cursor-pointer mb-3"
+                >
+                  <div className="text-left">
+                    <div className="text-xs text-gray-300 font-mono">Auto-Approve All Ops</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">Skip approval for all permitted tool calls (Discord)</div>
+                  </div>
+                  <div className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${local.autoApproveAll ? 'bg-yellow-500' : 'bg-zinc-700'}`}>
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${local.autoApproveAll ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  </div>
+                </button>
+
+                {local.autoApproveAll && (
+                  <div className="mb-2 px-2 py-1.5 bg-yellow-950/30 border border-yellow-500/20 rounded text-[10px] font-mono text-yellow-500">
+                    All permitted tool calls will execute without approval prompts.
+                  </div>
+                )}
 
                 {/* Auto-Approve Reads toggle */}
                 <button
