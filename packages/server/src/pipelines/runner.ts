@@ -335,6 +335,7 @@ export async function runWithBatchApprovalAsync(
   let resolvedSessionId = sessionId;
   const allTextParts: string[] = [];
   let currentMessage: string | undefined = userMessage;
+  let sessionApproved = false; // Once user approves, auto-approve remaining rounds
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const { text, proposals, resolvedSessionId: sid } = await runAgentStepAsync(
@@ -351,6 +352,15 @@ export async function runWithBatchApprovalAsync(
     if (proposals.length === 0) {
       // No tool calls — agent produced its final text response.
       break;
+    }
+
+    // ── Session-level auto-approve ────────────────────────────────────────────
+    // Once the user clicks "Approve All" in the first round, subsequent rounds
+    // within the same message are auto-approved without prompting again.
+    if (sessionApproved) {
+      console.log(`[PipelineRunner:${pipelineName}] Auto-approving ${proposals.length} proposal(s) (session approved)`);
+      await executeApprovedProposalsAsync(resolvedSessionId, proposals, onToolCallStart);
+      continue;
     }
 
     // ── Register the pending approval BEFORE sending the embed ────────────────
@@ -386,6 +396,7 @@ export async function runWithBatchApprovalAsync(
     clearTimeout(timeoutId);
 
     if (result.approved) {
+      sessionApproved = true; // Auto-approve all subsequent rounds
       await executeApprovedProposalsAsync(resolvedSessionId, proposals, onToolCallStart);
     } else {
       await denyProposalsAsync(resolvedSessionId, proposals);
