@@ -202,7 +202,7 @@ describe('/api/chat-test backdoor is removed', () => {
     // A 404 (route not found) OR a non-JSON response (SPA catch-all serving index.html)
     // both prove there is no /api/chat-test API handler.
     const isJsonApi = res.statusCode === 200 &&
-      (res.headers['content-type'] ?? '').includes('application/json');
+      String(res.headers['content-type'] ?? '').includes('application/json');
     expect(isJsonApi).toBe(false);
   });
 });
