@@ -2,8 +2,10 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { getDb, schema } from '../db/index.js';
-import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools } from '../mcp/index.js';
+import { registerServer, startServer, stopServer, getAllServers, removeServer, getServerTools, pauseAllServers, getMCPServer } from '../mcp/index.js';
 import { createDefaultPermission } from '../permissions/index.js';
+import { activeStreams } from '../agent/runtime.js';
+import { parse as shellParse } from 'shell-quote';
 
 const serverSchema = z.object({
   name: z.string().min(1),
@@ -15,13 +17,43 @@ const serverSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-function normalizeArgs(argsStr?: string): string | undefined {
+// ── Safe argument normalization ───────────────────────────────────────────────
+
+// Known-dangerous command patterns:
+// • Absolute paths to system executables (/bin/sh, /usr/bin/python, etc.)
+// • Shell metacharacters that could chain or inject commands
+// Reject:
+// • Absolute paths to system binary directories (/bin/sh, /usr/bin/python, etc.)
+// • Shell metacharacters that could chain or inject additional commands
+const DANGEROUS_COMMAND_RE = /(?:\/(?:bin|sbin|usr\/bin|usr\/sbin|usr\/local\/bin)\/|[;&|`]|\$\()/;
+
+/**
+ * Validates that a command string is safe to spawn. Returns an error string if
+ * the command is dangerous, or null if it looks safe.
+ *
+ * Exported for unit testing.
+ */
+export function validateCommand(cmd: string | undefined): string | null {
+  if (!cmd) return null; // No command = HTTP transport; validated elsewhere
+  if (DANGEROUS_COMMAND_RE.test(cmd)) {
+    return `Command contains disallowed pattern: "${cmd}". ` +
+      'Use npx, node, python3, uvx, or a relative/bare executable name.';
+  }
+  return null;
+}
+
+/** Exported for unit testing. */
+export function normalizeArgs(argsStr?: string): string | undefined {
   if (!argsStr || argsStr.trim() === '') return undefined;
   try {
     const parsed = JSON.parse(argsStr);
     return Array.isArray(parsed) ? JSON.stringify(parsed) : JSON.stringify([String(parsed)]);
   } catch {
-    return JSON.stringify(argsStr.split(' ').filter(Boolean));
+    // Fall back to shell-quote parsing for unquoted CLI-style strings.
+    // shell-quote correctly handles quoted spaces and escape sequences, unlike split(' ').
+    const parsed = shellParse(argsStr)
+      .filter((token): token is string => typeof token === 'string');
+    return JSON.stringify(parsed);
   }
 }
 
@@ -49,13 +81,13 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
       transport: s.transport,
       command: s.command,
       args: s.args,
-      envVars: s.env_vars,
+      envVars: s.envVars,           // db.select() converts env_vars → envVars
       url: s.url,
       enabled: Boolean(s.enabled),
-      status: runningMap.get(s.id)?.status || s.status,
-      toolCount: runningMap.get(s.id)?.toolCount || 0,
-      createdAt: s.created_at,
-      updatedAt: s.updated_at,
+      status: runningMap.get(s.id as string)?.status || s.status,
+      toolCount: runningMap.get(s.id as string)?.toolCount || 0,
+      createdAt: s.createdAt,       // db.select() converts created_at → createdAt
+      updatedAt: s.updatedAt,       // db.select() converts updated_at → updatedAt
     }));
 
     return reply.send(result);
@@ -63,6 +95,13 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.post('/api/servers', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = serverSchema.parse(request.body);
+
+    // Validate the command field before registering
+    const cmdError = validateCommand(body.command);
+    if (cmdError) {
+      return reply.code(400).send({ error: cmdError });
+    }
+
     const db = getDb();
     const now = Date.now();
     const id = nanoid();
@@ -134,17 +173,50 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDb();
 
     const updates: Record<string, unknown> = { updated_at: Date.now() };
-    if (body.name) updates.name = body.name;
-    if (body.command) updates.command = body.command;
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.command !== undefined) {
+      const cmdError = validateCommand(body.command);
+      if (cmdError) {
+        return reply.code(400).send({ error: cmdError });
+      }
+      updates.command = body.command;
+    }
     if (body.args !== undefined) updates.args = normalizeArgs(body.args);
     if (body.envVars !== undefined) updates.env_vars = normalizeEnvVars(body.envVars);
-    if (body.url) updates.url = body.url;
-    if (body.transport) updates.transport = body.transport;
+    if (body.url !== undefined) updates.url = body.url;
+    if (body.transport !== undefined) updates.transport = body.transport;
     if (body.enabled !== undefined) updates.enabled = body.enabled ? 1 : 0;
 
     db.update(schema.servers as any).set(updates).where((getCol: (col: string) => unknown) => getCol('id') === id);
 
-    return reply.send({ success: true });
+    // ── Auto-restart: stop the old process and re-register with new config ──
+    // This makes the new config available immediately on next Start click.
+    // We don't auto-start to avoid starting a server with potentially broken config.
+    let wasRunning = false;
+    try {
+      const existing = getMCPServer(id);
+      wasRunning = existing?.client.isConnected() ?? false;
+      if (wasRunning || existing) {
+        await stopServer(id).catch(() => {});
+      }
+    } catch { /* server may not have been registered yet */ }
+
+    // Re-read the freshly persisted row and re-register with updated values
+    const freshRows = db.select(schema.servers as any).where((getCol: (col: string) => any) => getCol('id') === id).all() as any[];
+    if (freshRows.length > 0) {
+      const s = freshRows[0];
+      await registerServer({
+        id,
+        name: s.name,
+        transport: s.transport,
+        command: s.command,
+        args: s.args ? JSON.parse(s.args) : undefined,
+        envVars: s.env_vars ? JSON.parse(s.env_vars) : undefined,
+        url: s.url,
+      });
+    }
+
+    return reply.send({ success: true, wasRunning });
   });
 
   fastify.delete('/api/servers/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -190,5 +262,20 @@ export async function serversRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = request.params;
     const tools = getServerTools(id);
     return reply.send(tools);
+  });
+
+  fastify.post('/api/mcp/halt', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // 1. Terminate active LLM streams immediately
+      activeStreams.forEach(controller => controller.abort());
+      
+      // 2. Disconnect and pause all running MCP servers
+      await pauseAllServers();
+      
+      return reply.send({ success: true, message: 'System halted successfully' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to halt system';
+      return reply.code(500).send({ error: message });
+    }
   });
 }

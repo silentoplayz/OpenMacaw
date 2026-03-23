@@ -65,13 +65,13 @@ export async function interceptToolCallAsync(
   }
 
   // ── 1. PermissionGuard ─────────────────────────────────────────────────────
-  const permResult = evaluatePermission({
+  const permResult = await evaluatePermission({
     serverId,
     toolName,
     toolInput: toolCall.input,
   });
 
-  if (!permResult.allowed) {
+  if (permResult.verdict === 'DENY') {
     const reason = permResult.reason ?? 'Permission denied';
     console.warn(`[ToolInterceptor] DENIED by PermissionGuard: ${reason}`);
     wsEmit({ type: 'tool_call_start', tool: toolName, server: serverId, input: toolCall.input });
@@ -151,8 +151,8 @@ export async function interceptToolCallAsync(
       const fullName = `${serverId}:${td.name}`;
       return fullName === toolCall.name || td.name === toolName;
     });
-    if (match && typeof match.promptInjectionPrevention === 'boolean') {
-      perToolFlag = !!match.promptInjectionPrevention;
+    if (match && typeof (match as any).promptInjectionPrevention === 'boolean') {
+      perToolFlag = !!(match as any).promptInjectionPrevention;
     }
   } catch {
     // ignore
@@ -341,7 +341,7 @@ async function logActivity(
   serverId: string,
   toolName: string,
   toolInput: Record<string, unknown>,
-  outcome: 'allowed' | 'denied',
+  outcome: 'allowed' | 'denied' | 'auto_approved',
   reason?: string,
   latency?: number
 ): Promise<void> {

@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
-import { getConfig } from '../config.js';
+import { getActiveSettingsForUser } from '../config.js';
 
 const chatSchema = z.discriminatedUnion('type', [
   z.object({
@@ -14,11 +14,20 @@ const chatSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('join'),
     sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal('regenerate'),
+    sessionId: z.string(),
+    model: z.string().optional(),
+    mode: z.enum(['build', 'plan']).optional(),
   })
 ]);
 
 // Registry to track active WebSocket connections for each session
 export const socketRegistry = new Map<string, (event: AgentEvent) => void>();
+
+// Per-session abort controllers — one per active LLM stream
+export const sessionAbortControllers = new Map<string, AbortController>();
 
 export function broadcastToSession(sessionId: string, event: AgentEvent) {
   const handler = socketRegistry.get(sessionId);
@@ -27,9 +36,61 @@ export function broadcastToSession(sessionId: string, event: AgentEvent) {
   }
 }
 
+/** Abort the active stream for a session, if any. Returns true if something was aborted. */
+export function abortSession(sessionId: string): boolean {
+  const ctrl = sessionAbortControllers.get(sessionId);
+  if (ctrl) {
+    ctrl.abort();
+    sessionAbortControllers.delete(sessionId);
+    return true;
+  }
+  return false;
+}
+
+// Origins that are allowed to open the WebSocket.
+// Kept in sync with the CORS allow-list in index.ts.
+const WS_ALLOWED_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://localhost:4000',
+  // Production: same-origin requests have no Origin header — handled below.
+]);
+
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.get('/ws/chat', { websocket: true }, (socket, _request) => {
-    console.log('[WebSocket] New connection');
+  fastify.get('/ws/chat', { websocket: true }, async (socket, request) => {
+    // ── 1. JWT authentication ────────────────────────────────────────────────
+    // Accept token via Authorization header OR ?token= query param (WS clients
+    // cannot set arbitrary headers in all environments, so both are supported).
+    try {
+      await request.jwtVerify();
+    } catch {
+      // Try query param fallback
+      const queryToken = (request.query as Record<string, string>)?.token;
+      if (queryToken) {
+        try {
+          await request.jwtVerify({ onlyCookie: false });
+        } catch {
+          socket.close(4001, 'Unauthorized — invalid or missing JWT');
+          return;
+        }
+      } else {
+        socket.close(4001, 'Unauthorized — invalid or missing JWT');
+        return;
+      }
+    }
+
+    // ── 2. Origin validation ─────────────────────────────────────────────────
+    // Browsers always send Origin on cross-origin WS upgrades. A missing Origin
+    // header is only possible for same-origin requests or non-browser clients
+    // (curl, server-to-server) — allow those through.
+    const origin = request.headers.origin;
+    if (origin && !WS_ALLOWED_ORIGINS.has(origin)) {
+      socket.close(4003, 'Forbidden — origin not allowed');
+      return;
+    }
+    const authenticatedUserId: string = (request as any).user?.id;
+    console.log('[WebSocket] New authenticated connection, userId:', authenticatedUserId);
     socket.on('error', (err) => {
       console.error('[WebSocket] Error:', err);
     });
@@ -47,32 +108,90 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (parsed.type === 'chat') {
           const { sessionId, message: userMessage, model, mode } = parsed;
-          console.log('[WebSocket] Chat message:', userMessage.substring(0, 50), 'session:', sessionId);
+          console.log('[WebSocket] Chat message received for session:', sessionId);
 
           // Register this socket for the session
           socketRegistry.set(sessionId, sendEvent);
 
-          const session = getSession(sessionId);
+          // ── Session ownership check ──────────────────────────────────────────
+          // Pass userId from the JWT so only the session owner can interact.
+          const session = getSession(sessionId, authenticatedUserId);
           if (!session) {
-            console.log('[WebSocket] Session not found:', sessionId);
+            console.log('[WebSocket] Session not found or not owned by user:', sessionId);
             sendEvent({ type: 'error', message: 'Session not found' });
             return;
           }
 
-          const config = getConfig();
+          const config = getActiveSettingsForUser(session.userId);
           console.log('[WebSocket] Creating agent with model:', model || session.model || config.DEFAULT_MODEL);
 
-          await createAgentRuntime(
-            {
-              sessionId,
-              model: model || session.model || config.DEFAULT_MODEL,
-              systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
-              mode: mode || session.mode,
-              maxSteps: config.MAX_STEPS,
-            },
-            sendEvent
-          ).run(userMessage);
+          // Register an AbortController for this session so the stop endpoint can cancel it
+          const abortCtrl = new AbortController();
+          sessionAbortControllers.set(sessionId, abortCtrl);
 
+          // Always route through the registry so that if the client reconnects mid-run
+          // and re-registers a new socket via 'join', subsequent events reach the new socket.
+          const liveEventHandler = (event: AgentEvent) => {
+            const handler = socketRegistry.get(sessionId);
+            if (handler) {
+              handler(event);
+            }
+          };
+
+          try {
+            await createAgentRuntime(
+              {
+                sessionId,
+                model: model || session.model || config.DEFAULT_MODEL,
+                personality: session.personality || config.PERSONALITY,
+                mode: mode || session.mode,
+                maxSteps: config.MAX_STEPS,
+                signal: abortCtrl.signal,
+              },
+              liveEventHandler
+            ).run(userMessage);
+          } finally {
+            // Always clean up — whether run completed, errored, or was aborted
+            sessionAbortControllers.delete(sessionId);
+          }
+
+        } else if (parsed.type === 'regenerate') {
+          const { sessionId, model, mode } = parsed;
+          console.log('[WebSocket] Regenerate session:', sessionId);
+
+          socketRegistry.set(sessionId, sendEvent);
+          const session = getSession(sessionId, authenticatedUserId);
+          if (!session) {
+            sendEvent({ type: 'error', message: 'Session not found' });
+            return;
+          }
+
+          const config = getActiveSettingsForUser(session.userId);
+          const abortCtrl = new AbortController();
+          sessionAbortControllers.set(sessionId, abortCtrl);
+
+          const liveEventHandler = (event: AgentEvent) => {
+            const handler = socketRegistry.get(sessionId);
+            if (handler) {
+              handler(event);
+            }
+          };
+
+          try {
+            await createAgentRuntime(
+              {
+                sessionId,
+                model: model || session.model || config.DEFAULT_MODEL,
+                personality: session.personality || config.PERSONALITY,
+                mode: mode || session.mode,
+                maxSteps: config.MAX_STEPS,
+                signal: abortCtrl.signal,
+              },
+              liveEventHandler
+            ).run(); // No message passed = regenerate from history
+          } finally {
+            sessionAbortControllers.delete(sessionId);
+          }
         } else if (parsed.type === 'join') {
           const { sessionId } = parsed;
           console.log('[WebSocket] Join session:', sessionId);
@@ -100,47 +219,15 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     });
   });
 
-  // HTTP test endpoint for quick testing without WebSocket
-  fastify.post('/api/chat-test', async (request, reply) => {
-    const body = request.body as { sessionId?: string; message?: string; model?: string };
-    const { sessionId, message, model } = body;
-
-    console.log('[HTTP Test] Chat request:', message?.substring(0, 50), 'session:', sessionId);
-
-    if (!sessionId || !message) {
-      return reply.code(400).send({ error: 'sessionId and message required' });
+  // POST /api/sessions/:id/stop — abort the active LLM stream for a session
+  fastify.post('/api/sessions/:id/stop', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const aborted = abortSession(id);
+    if (aborted) {
+      broadcastToSession(id, { type: 'error', message: 'Generation stopped by user.' });
+      return reply.send({ stopped: true });
     }
-
-    const session = getSession(sessionId);
-    if (!session) {
-      return reply.code(404).send({ error: 'Session not found' });
-    }
-
-    const config = getConfig();
-    const events: AgentEvent[] = [];
-
-    const eventHandler = (event: AgentEvent) => {
-      console.log('[HTTP Test] Event:', event.type);
-      events.push(event);
-    };
-
-    try {
-      await createAgentRuntime(
-        {
-          sessionId,
-          model: model || session.model || config.DEFAULT_MODEL,
-          systemPrompt: session.systemPrompt || config.SYSTEM_PROMPT,
-          mode: session.mode,
-          maxSteps: config.MAX_STEPS,
-        },
-        eventHandler
-      ).run(message);
-
-      return reply.send({ events });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('[HTTP Test] Error:', errorMessage);
-      return reply.code(500).send({ error: errorMessage, events });
-    }
+    return reply.code(404).send({ stopped: false, error: 'No active stream for this session' });
   });
+
 }

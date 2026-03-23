@@ -1,9 +1,11 @@
 import { MCPClient } from './client.js';
 import type { ToolDefinition } from '../llm/provider.js';
-import { getDb, schema } from '../db/index.js';
+import { getDrizzleDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { getPermissionForServer, createDefaultPermission } from '../permissions/index.js';
 
-export type ServerStatus = 'stopped' | 'running' | 'error' | 'unhealthy';
+export type ServerStatus = 'stopped' | 'running' | 'error' | 'unhealthy' | 'paused';
 
 export interface MCPServerInfo {
   id: string;
@@ -56,8 +58,8 @@ export async function startServer(id: string): Promise<MCPServerInfo> {
     throw new Error(`Server ${id} not found`);
   }
 
-  const db = getDb();
-  const serversData = db.select(schema.servers as any).where((getCol: (col: string) => any) => getCol('id') === id).all() as any[];
+  const db = getDrizzleDb();
+  const serversData = await db.select().from(schema.servers).where(eq(schema.servers.id, id));
 
   if (serversData.length === 0) {
     throw new Error(`Server ${id} not in database`);
@@ -67,10 +69,15 @@ export async function startServer(id: string): Promise<MCPServerInfo> {
 
   try {
     if (serverData.transport === 'stdio' && serverData.command) {
-      const envVars = serverData.env_vars ? JSON.parse(serverData.env_vars) : undefined;
+      // db.select() converts snake_case keys to camelCase — use envVars not env_vars
+      const envVars = serverData.envVars ? JSON.parse(serverData.envVars as string) : undefined;
+      const args = serverData.args ? JSON.parse(serverData.args as string) : undefined;
+
+      console.log(`[MCP] Spawning '${server.info.name}' | cmd: ${serverData.command} | args:`, args, '| env:', envVars);
+
       await server.client.connect({
-        command: serverData.command,
-        args: serverData.args ? JSON.parse(serverData.args) : undefined,
+        command: serverData.command as string,
+        args,
         envVars,
       });
     } else {
@@ -114,6 +121,16 @@ export function getServerTools(id: string): ToolDefinition[] {
   return server.client.getTools();
 }
 
+/**
+ * Look up a tool definition by server ID and bare tool name.
+ * Returns undefined if the server or tool is not found.
+ */
+export function getToolDefinition(serverId: string, toolName: string): ToolDefinition | undefined {
+  const server = servers.get(serverId);
+  if (!server || !server.client.isConnected()) return undefined;
+  return server.client.getTools().find(t => t.name === toolName);
+}
+
 export function getAllTools(): ToolDefinition[] {
   const allTools: ToolDefinition[] = [];
   for (const [, server] of servers) {
@@ -132,6 +149,26 @@ export function getAllTools(): ToolDefinition[] {
   return allTools;
 }
 
+/**
+ * Given a bare tool name (e.g. "list_directory"), find the ID of the first
+ * connected server that exposes that tool.  Also handles the already-encoded
+ * "SERVERID__toolname" format by stripping the prefix first.
+ */
+export function findServerIdForTool(toolName: string): string | undefined {
+  // Strip any existing SERVERID__ prefix so we always compare bare names
+  const dunderIdx = toolName.indexOf('__');
+  const bareName = dunderIdx !== -1 ? toolName.substring(dunderIdx + 2) : toolName;
+
+  for (const [serverId, server] of servers) {
+    if (!server.client.isConnected()) continue;
+    const tools = server.client.getTools();
+    if (tools.some(t => t.name === bareName)) {
+      return serverId;
+    }
+  }
+  return undefined;
+}
+
 export async function removeServer(id: string): Promise<void> {
   const server = servers.get(id);
   if (server) {
@@ -140,11 +177,28 @@ export async function removeServer(id: string): Promise<void> {
   }
 }
 
+export async function pauseAllServers(): Promise<void> {
+  const promises = [];
+  for (const [id, server] of servers) {
+    if (server.client.isConnected()) {
+      promises.push(
+        server.client.disconnect().then(() => {
+          server.info.status = 'paused';
+          server.info.toolCount = 0;
+        }).catch(err => {
+          console.error(`[MCP] Failed to pause server ${id}:`, err);
+        })
+      );
+    }
+  }
+  await Promise.all(promises);
+}
+
 export async function restoreConnections(): Promise<void> {
-  const db = getDb();
+  const db = getDrizzleDb();
   let savedServers: any[] = [];
   try {
-    savedServers = db.select(schema.servers as any).where().all() as any[];
+    savedServers = await db.select().from(schema.servers);
   } catch (error) {
     console.error('[MCP] Failed to query databases for saved servers.', error);
     return;
@@ -218,10 +272,10 @@ export async function restoreConnections(): Promise<void> {
 }
 
 export async function migrateServerArguments(): Promise<void> {
-  const db = getDb();
+  const db = getDrizzleDb();
   let savedServers: any[] = [];
   try {
-    savedServers = db.select(schema.servers as any).where().all() as any[];
+    savedServers = await db.select().from(schema.servers);
   } catch (error) {
     return;
   }
@@ -249,9 +303,9 @@ export async function migrateServerArguments(): Promise<void> {
     }
 
     if (needsMigration) {
-      db.update(schema.servers as any)
+      await db.update(schema.servers)
         .set({ args: newArgsStr })
-        .where((getCol: (col: string) => unknown) => getCol('id') === s.id);
+        .where(eq(schema.servers.id, s.id));
       migratedCount++;
     }
   }

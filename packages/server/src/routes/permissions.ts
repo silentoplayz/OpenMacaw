@@ -36,6 +36,10 @@ export async function permissionsRoutes(fastify: FastifyInstance): Promise<void>
     if (typeof body.networkAllowed === 'boolean') updates.networkAllowed = body.networkAllowed;
     if (typeof body.maxCallsPerMinute === 'number') updates.maxCallsPerMinute = body.maxCallsPerMinute;
     if (typeof body.maxTokensPerCall === 'number') updates.maxTokensPerCall = body.maxTokensPerCall;
+    // ── Trust Policy: per-tool auto-approve ────────────────────────────────────
+    if (typeof body.toolAutoApprove === 'object' && body.toolAutoApprove !== null && !Array.isArray(body.toolAutoApprove)) {
+      updates.toolAutoApprove = body.toolAutoApprove;
+    }
     
     const updated = await updatePermission(serverId, updates as any);
     return reply.send(updated);

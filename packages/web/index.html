@@ -2,11 +2,33 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>OpenMacaw - MCP Agent Platform</title>
+
+    <!-- PWA / Theme -->
+    <meta name="theme-color" content="#09090b" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="OpenMacaw" />
+
+    <!-- Description / OG -->
+    <meta name="description" content="Self-hosted MCP Agent Platform with granular permission control" />
+    <meta name="application-name" content="OpenMacaw" />
+
+    <!-- Icons -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦜</text></svg>" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+
+    <!-- Manifest injected by vite-plugin-pwa -->
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="loading-screen" style="position:fixed; inset:0; display:flex; justify-content:center; align-items:center; background-color:#000000; z-index: 9999;">
+         <span style="font-size: 4rem;">🦜</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,0 +1,90 @@
+import TelegramBot from 'node-telegram-bot-api';
+import type { PipelineRecord, TelegramConfig } from './types.js';
+import { runAgentForPipelineAsync, splitMessage } from './runner.js';
+import { createSession } from '../agent/session.js';
+import { updatePipeline } from './manager.js';
+
+export class TelegramPipeline {
+  private record: PipelineRecord;
+  private bot: TelegramBot | null = null;
+
+  constructor(record: PipelineRecord) {
+    this.record = record;
+  }
+
+  async startAsync(): Promise<void> {
+    const cfg = this.record.config as TelegramConfig;
+    if (!cfg.botToken) throw new Error('Telegram pipeline requires a botToken');
+    if (!this.record.sessionId) throw new Error('Telegram pipeline requires an assigned session');
+
+    const sessionId = this.record.sessionId;
+    const pipelineId = this.record.id;
+    const allowedChatIds = cfg.allowedChatIds ?? [];
+
+    this.bot = new TelegramBot(cfg.botToken, { polling: true });
+
+    this.bot.on('message', async (msg) => {
+      if (!msg.text) return;
+
+      const chatId = String(msg.chat.id);
+      if (allowedChatIds.length > 0 && !allowedChatIds.includes(chatId)) return;
+
+      // ── Typing indicator ──────────────────────────────────────────────────
+      // Telegram's "typing" action expires after ~5 s, so fire it immediately
+      // and refresh every 4 s for the full duration of the agent run.
+      const sendTyping = (): void => {
+        this.bot?.sendChatAction(msg.chat.id, 'typing').catch(() => undefined);
+      };
+      sendTyping();
+      const typingInterval = setInterval(sendTyping, 4_000);
+
+      const sessionRecoveryFn = async (): Promise<string | null> => {
+        try {
+          const newSession = createSession({ title: `${this.record.name} Conversation` });
+          updatePipeline(pipelineId, { sessionId: newSession.id });
+          return newSession.id;
+        } catch { return null; }
+      };
+
+      // Each tool call refreshes the typing action immediately so it never
+      // lapses mid-execution.
+      const onToolCallStart = (): void => { sendTyping(); };
+
+      try {
+        const response = await runAgentForPipelineAsync(
+          sessionId,
+          msg.text,
+          undefined,
+          sessionRecoveryFn,
+          onToolCallStart,
+        );
+        if (response) {
+          // Telegram hard limit is 4096 characters per message
+          for (const chunk of splitMessage(response, 4000)) {
+            await this.bot!.sendMessage(msg.chat.id, chunk);
+          }
+        }
+      } catch (err) {
+        console.error(`[Telegram Pipeline: ${this.record.name}] Error processing message:`, err);
+        await this.bot!.sendMessage(msg.chat.id, 'An error occurred while processing your message.')
+          .catch(() => undefined);
+      } finally {
+        clearInterval(typingInterval);
+      }
+    });
+
+    console.log(`[Telegram Pipeline: ${this.record.name}] Started with long-polling`);
+  }
+
+  async stopAsync(): Promise<void> {
+    if (this.bot) {
+      await this.bot.stopPolling({ cancel: true });
+      this.bot = null;
+      console.log(`[Telegram Pipeline: ${this.record.name}] Stopped`);
+    }
+  }
+
+  getId(): string {
+    return this.record.id;
+  }
+}

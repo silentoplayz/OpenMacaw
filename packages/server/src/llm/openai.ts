@@ -14,19 +14,23 @@ export class OpenAIProvider implements LLMProvider {
   ];
 
   private client: OpenAI | null = null;
+  private clientApiKey: string | null = null;
 
   private getClient(): OpenAI {
-    if (!this.client) {
-      const config = getConfig();
-      const db = getDb();
-      const settings = db.select(schema.settings as any).where().all() as any[];
-      const apiKeySetting = settings.find((s: any) => s.key === 'OPENAI_API_KEY');
-      const apiKey = apiKeySetting?.value || config.OPENAI_API_KEY;
-      
-      if (!apiKey) {
-        throw new Error('OPENAI_API_KEY not configured');
-      }
+    const config = getConfig();
+    const db = getDb();
+    const globalSettings = db.select(schema.settings as any).where().all() as any[];
+    const globalKeySetting = globalSettings.find((s: any) => s.key === 'OPENAI_API_KEY');
+    const userSettings = db.select('user_settings' as any).where().all() as any[];
+    const userKeySetting = userSettings.find((s: any) => s.key === 'OPENAI_API_KEY');
+    const apiKey = userKeySetting?.value || globalKeySetting?.value || config.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY not configured');
+    }
+    if (!this.client || this.clientApiKey !== apiKey) {
       this.client = new OpenAI({ apiKey });
+      this.clientApiKey = apiKey;
     }
     return this.client;
   }
@@ -35,7 +39,8 @@ export class OpenAIProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void
+    onDelta: (delta: StreamDelta) => void | Promise<void>,
+    signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
       if (msg.role === 'tool') {
@@ -59,7 +64,7 @@ export class OpenAIProvider implements LLMProvider {
             role: 'assistant',
             content: msg.content,
             tool_calls: toolCalls.map(tc => ({
-              id: msg.toolCallId || 'call_unknown',
+              id: tc.id || msg.toolCallId || 'call_unknown',
               type: 'function',
               function: {
                 name: tc.name, // Correct name should already be prefixed in toolCalls string
@@ -91,7 +96,7 @@ export class OpenAIProvider implements LLMProvider {
       messages: openaiMessages,
       tools: openaiTools.length > 0 ? openaiTools as any[] : undefined,
       stream: true,
-    });
+    }, { signal });
 
     let inputTokens = 0;
     let outputTokens = 0;
@@ -130,7 +135,7 @@ export class OpenAIProvider implements LLMProvider {
 
       if (choice.finish_reason) {
         if (currentToolCall) {
-          onDelta({
+          await onDelta({
             type: 'tool_use',
             toolCall: { ...currentToolCall },
           });

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "tsx watch packages/server/src/index.ts",
-    "dev:web": "vite packages/web",
+    "dev:web": "cd packages/web && vite",
     "build": "npm run build:server && npm run build:web",
     "build:server": "tsc -p packages/server/tsconfig.json",
     "build:web": "cd packages/web && npm run build",
@@ -20,8 +20,14 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "concurrently": "^8.2.2",
+    "framer-motion": "^12.35.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vite-plugin-pwa": "^1.2.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.1",
+    "undici": "^6.23.0"
   },
   "engines": {
     "node": ">=20.0.0"

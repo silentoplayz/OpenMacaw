@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="40" fill="#09090b"/>
+  <rect width="192" height="192" rx="40" fill="url(#bg)"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="192" y2="192" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0e1a2b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield outline -->
+  <path d="M96 32 L140 52 L140 96 C140 122 120 142 96 152 C72 142 52 122 52 96 L52 52 Z"
+        fill="none" stroke="#06b6d4" stroke-width="5" stroke-linejoin="round"/>
+  <!-- Shield inner fill -->
+  <path d="M96 42 L132 58 L132 96 C132 118 115 135 96 144 C77 135 60 118 60 96 L60 58 Z"
+        fill="#06b6d4" fill-opacity="0.08"/>
+  <!-- Check mark -->
+  <path d="M78 96 L90 108 L116 80"
+        fill="none" stroke="#06b6d4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

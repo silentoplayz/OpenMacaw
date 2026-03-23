@@ -21,6 +21,10 @@ export interface ServerPermission {
   maxTokensPerCall: number;
   promptInjectionPrevention?: boolean;
   toolPromptInjectionPrevention: Record<string, 'inherit' | 'enable' | 'disable'>;
+  // ── Trust Policy ──────────────────────────────────────────────────────────
+  // Per-tool auto-approve: when true for a tool, it executes without user
+  // confirmation (ALLOW_SILENT). When false/absent, REQUIRE_APPROVAL.
+  toolAutoApprove: Record<string, boolean>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +57,7 @@ export function getPermissionForServer(serverId: string): ServerPermission | nul
     maxTokensPerCall: perm.maxTokensPerCall,
     promptInjectionPrevention: Boolean((perm as any).prompt_injection_prevention ?? (perm as any).promptInjectionPrevention ?? false),
     toolPromptInjectionPrevention: JSON.parse((perm as any).toolPromptInjectionPrevention ?? (perm as any).tool_prompt_injection_prevention ?? '{}'),
+    toolAutoApprove: JSON.parse((perm as any).toolAutoApprove ?? (perm as any).tool_auto_approve ?? '{}'),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   };
@@ -83,12 +88,13 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     max_tokens_per_call: 100000,
     prompt_injection_prevention: 0,
     tool_prompt_injection_prevention: '{}',
+    tool_auto_approve: '{}',
     created_at: now,
     updated_at: now,
   };
 
   db.insert(schema.permissions as any).values(perm);
-  
+
   return {
     ...perm,
     allowedPaths: ['/'],
@@ -110,6 +116,7 @@ export async function createDefaultPermission(serverId: string): Promise<ServerP
     updatedAt: new Date(now),
     promptInjectionPrevention: false,
     toolPromptInjectionPrevention: {},
+    toolAutoApprove: {},
   } as ServerPermission;
 }
 
@@ -138,6 +145,7 @@ export async function updatePermission(serverId: string, updates: Partial<Server
   if ((updates as any).toolPromptInjectionPrevention !== undefined) {
     dbUpdates.tool_prompt_injection_prevention = JSON.stringify((updates as any).toolPromptInjectionPrevention);
   }
+  if (updates.toolAutoApprove !== undefined) dbUpdates.tool_auto_approve = JSON.stringify(updates.toolAutoApprove);
 
   db.update(schema.permissions as any).set(dbUpdates).where((getCol: (col: string) => unknown) => getCol('serverId') === serverId);
   
@@ -175,6 +183,7 @@ export function getAllPermissions(): ServerPermission[] {
     maxTokensPerCall: perm.maxTokensPerCall,
     promptInjectionPrevention: Boolean((perm as any).prompt_injection_prevention ?? (perm as any).promptInjectionPrevention ?? false),
     toolPromptInjectionPrevention: JSON.parse((perm as any).toolPromptInjectionPrevention ?? (perm as any).tool_prompt_injection_prevention ?? '{}'),
+    toolAutoApprove: JSON.parse((perm as any).toolAutoApprove ?? (perm as any).tool_auto_approve ?? '{}'),
     createdAt: new Date(perm.createdAt),
     updatedAt: new Date(perm.updatedAt),
   }));

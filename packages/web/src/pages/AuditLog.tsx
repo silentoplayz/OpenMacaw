@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { Loader2, Search, ChevronRight, ChevronDown, Clock, SearchX, Download, Calendar, Filter } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { apiFetch } from '../api';
 
 interface ActivityEntry {
@@ -8,14 +8,33 @@ interface ActivityEntry {
   serverId: string;
   toolName: string;
   toolInput: string;
-  outcome: 'allowed' | 'denied';
+  outcome: 'allowed' | 'denied' | 'auto_approved';
   reason?: string;
   latency?: number;
   timestamp: string;
 }
 
 export default function AuditLog() {
-  const [filter, setFilter] = useState<{ serverId?: string; outcome?: string }>({});
+  const [filter, setFilter] = useState<{ serverId?: string; outcome?: string; search?: string }>({});
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [showRawJson, setShowRawJson] = useState(false);
+  const [limit, setLimit] = useState(50);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Read preference from localStorage (set by Settings page)
+  useEffect(() => {
+    const pref = localStorage.getItem('openmacaw-show-raw-json');
+    setShowRawJson(pref === 'true');
+  }, []);
+
+  const toggleRow = (id: string) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const { data: activities, isLoading } = useQuery<ActivityEntry[]>({
     queryKey: ['activity', filter],
@@ -23,11 +42,13 @@ export default function AuditLog() {
       const params = new URLSearchParams();
       if (filter.serverId) params.set('serverId', filter.serverId);
       if (filter.outcome) params.set('type', filter.outcome);
-      params.set('limit', '100');
+      if (filter.search) params.set('search', filter.search);
+      params.set('limit', limit.toString());
       
       const res = await apiFetch(`/api/activity?${params}`);
       return res.json();
     },
+    refetchInterval: 3000, // auto-refresh every 3s
   });
 
   const { data: servers } = useQuery<{ id: string; name: string }[]>({
@@ -48,6 +69,16 @@ export default function AuditLog() {
           AUDIT_LOG
         </h1>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Search actions or payloads..."
+              value={filter.search || ''}
+              onChange={(e) => setFilter({ ...filter, search: e.target.value || undefined })}
+              className="pl-7 pr-2 py-1 text-xs font-mono bg-black border border-white/10 rounded focus:outline-none focus:border-cyan-500 text-gray-300 w-56 placeholder-gray-600 transition-colors"
+            />
+          </div>
           <select
             value={filter.serverId || ''}
             onChange={(e) => setFilter({ ...filter, serverId: e.target.value || undefined })}
@@ -65,8 +96,26 @@ export default function AuditLog() {
           >
             <option value="">* (ALL_OUTCOMES)</option>
             <option value="allowed">ALLOWED</option>
+            <option value="auto_approved">⚡ AUTO</option>
             <option value="denied">DENIED</option>
           </select>
+          <button
+            onClick={async () => {
+              if (!activities) return;
+              setIsExporting(true);
+              const blob = new Blob([JSON.stringify(activities, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `audit-log-${new Date().toISOString().split('T')[0]}.json`;
+              a.click();
+              setIsExporting(false);
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono bg-zinc-900 border border-white/10 rounded hover:bg-zinc-800 text-gray-400 hover:text-white transition-all uppercase tracking-tight"
+          >
+            <Download className="w-3 h-3" />
+            {isExporting ? '...' : 'Export'}
+          </button>
         </div>
       </div>
 
@@ -86,36 +135,107 @@ export default function AuditLog() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.02]">
-              {activities?.map((activity) => (
-                <tr key={activity.id} className="hover:bg-white/[0.02] transition-colors font-mono text-xs">
-                  <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">
-                    [{new Date(activity.timestamp).toISOString().replace('T', ' ').substring(0, 19)}]
-                  </td>
-                  <td className="px-3 py-1.5 text-cyan-600">
-                    <span className="opacity-50">CALL </span>
-                    {activity.toolName}
-                  </td>
-                  <td className="px-3 py-1.5 text-gray-400">
-                    @{serverMap.get(activity.serverId) || activity.serverId}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    {activity.outcome === 'allowed' ? (
-                        <span className="text-green-500">200 ALLOWED {activity.latency ? `(${activity.latency}ms)` : ''}</span>
-                    ) : (
-                        <span className="text-red-500">403 DENIED {activity.reason ? `- ${activity.reason}` : ''}</span>
+              {activities?.map((activity) => {
+                const isExpanded = showRawJson || expandedRows.has(activity.id);
+                const latencyColor = activity.latency 
+                  ? (activity.latency < 500 ? 'text-green-500' : activity.latency < 2000 ? 'text-yellow-500' : 'text-red-500')
+                  : '';
+                
+                return (
+                  <React.Fragment key={activity.id}>
+                    <tr onClick={() => toggleRow(activity.id)} className={`hover:bg-white/[0.05] cursor-pointer transition-colors font-mono text-xs ${isExpanded ? 'bg-white/[0.02]' : ''}`}>
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap flex items-center gap-1">
+                        {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        [{new Date(Number(activity.timestamp) < 10000000000 ? Number(activity.timestamp) * 1000 : Number(activity.timestamp)).toISOString().replace('T', ' ').substring(0, 19)}]
+                      </td>
+                      <td className="px-3 py-2 text-cyan-600">
+                        <span className="opacity-50">CALL </span>
+                        {activity.toolName}
+                      </td>
+                      <td className="px-3 py-2 text-gray-400">
+                        @{serverMap.get(activity.serverId) || activity.serverId}
+                      </td>
+                      <td className="px-3 py-2">
+                        {activity.outcome === 'auto_approved' ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">⚡ AUTO</span>
+                              {activity.latency && (
+                                <span className={`flex items-center gap-1 ${latencyColor} opacity-80 text-[10px]`}>
+                                  <Clock className="w-3 h-3" /> {activity.latency}ms
+                                </span>
+                              )}
+                            </div>
+                        ) : activity.outcome === 'allowed' ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-green-500">200 ALLOWED</span>
+                              {activity.latency && (
+                                <span className={`flex items-center gap-1 ${latencyColor} opacity-80 text-[10px]`}>
+                                  <Clock className="w-3 h-3" /> {activity.latency}ms
+                                </span>
+                              )}
+                            </div>
+                        ) : (
+                            <span className="text-red-500 truncate block max-w-xs" title={activity.reason}>403 DENIED {activity.reason ? `- ${activity.reason}` : ''}</span>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-black/50 border-t border-white/[0.02]">
+                        <td colSpan={4} className="px-7 py-3">
+                          <div className="grid grid-cols-1 gap-3">
+                            {activity.toolInput && (
+                              <div>
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider block mb-1">Payload / Input Arguments</span>
+                                <pre className="text-[10px] font-mono whitespace-pre-wrap bg-zinc-950 border border-white/5 p-2 rounded text-gray-300 max-h-48 overflow-y-auto w-full">
+                                  {(() => {
+                                    try { 
+                                      return JSON.stringify(JSON.parse(activity.toolInput), null, 2); 
+                                    } catch { 
+                                      return activity.toolInput; 
+                                    }
+                                  })()}
+                                </pre>
+                              </div>
+                            )}
+                            {activity.outcome === 'denied' && activity.reason && (
+                              <div>
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider block mb-1">Denial Reason</span>
+                                <div className="text-[11px] font-mono text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2 rounded break-words">
+                                  {activity.reason}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </React.Fragment>
+                );
+              })}
               {activities?.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-8 text-center text-gray-600 font-mono text-xs">
-                    No matching activity
+                  <td colSpan={4} className="px-3 py-16 text-center text-gray-500 font-mono">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <SearchX className="w-8 h-8 opacity-20" />
+                      <span className="opacity-60 text-xs">No matching activity records found</span>
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        )}
+
+        {/* Load More Footer */}
+        {activities && activities.length >= limit && (
+          <div className="p-6 flex justify-center border-t border-white/5 bg-black/50 backdrop-blur-sm sticky bottom-0">
+            <button
+              onClick={() => setLimit(prev => prev + 50)}
+              className="px-8 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-xl text-[10px] font-bold font-mono text-gray-400 hover:text-white transition-all uppercase tracking-widest shadow-xl"
+            >
+              Load Older Records
+            </button>
+          </div>
         )}
       </div>
     </div>

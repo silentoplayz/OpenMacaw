@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, FolderOpen, Terminal, Globe, Network, X, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Loader2, FolderOpen, Terminal, Globe, Network, X, Shield, ShieldAlert, ShieldCheck, Info, CheckCircle2, AlertTriangle, Lock } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { apiFetch } from '../api';
 
@@ -182,9 +182,20 @@ export default function Permissions() {
                 <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
               </label>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-              When enabled, all tool calls from this server pass through an injection detection pipeline including canary leak checks, sanitizer, step verifier, and final verifier. May pause execution for human confirmation on suspicious inputs.
-            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">
+                Comprehensive security pipeline for all tool calls.
+              </p>
+              <div className="group relative">
+                <Info className="w-3.5 h-3.5 text-amber-500/60 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 text-[11px] leading-relaxed text-gray-300">
+                  <div className="font-bold text-amber-400 mb-1 flex items-center gap-1">
+                    <ShieldCheck size={12} /> Protection Layers
+                  </div>
+                  Includes canary leak checks, multi-stage sanitization, step verifier, and final output validation. Suspicious inputs will trigger human-in-the-loop (HITL) confirmation.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -447,10 +458,27 @@ export default function Permissions() {
               <ShieldCheck className="w-5 h-5 text-amber-500" />
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Tool-Specific PIP Overrides</h2>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Override Prompt Injection Prevention settings for individual tools. "Inherit" uses the server-wide setting above.
-            </p>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 bg-zinc-50 dark:bg-black/20 p-3 rounded-xl border border-gray-100 dark:border-white/5">
+              <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                Override Prompt Injection Prevention for individual tools. "Inherit" follows the server-wide setting.
+              </p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {(['inherit', 'enable', 'disable'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => {
+                      if (confirm(`Set ALL ${tools.length} tools to ${opt}?`)) {
+                        tools.forEach(t => updateToolPipMutation.mutate({ toolName: t.name, override: opt }));
+                      }
+                    }}
+                    className="px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider rounded-lg border border-white/5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all"
+                  >
+                    All {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
               {tools.map((tool) => {
                 const override = permission.toolPromptInjectionPrevention?.[tool.name] || 'inherit';
                 return (

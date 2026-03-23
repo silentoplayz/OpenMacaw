@@ -1,16 +1,69 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('katex/dist/katex.min.css');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply antialiased bg-gray-50 text-gray-900 border-gray-200;
+  :root {
+    color-scheme: dark;
+  }
+
+  html, body {
+    @apply bg-black text-white antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Custom focus ring for accessibility */
+  :focus-visible {
+    @apply outline-none ring-2 ring-cyan-500 ring-offset-2 ring-offset-black;
+  }
+
+  /* Smooth scrolling for all anchors */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Custom scrollbar for a premium feel */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    @apply bg-zinc-950/40 backdrop-blur-md border border-white/5;
   }
   
-  .dark body {
-    @apply bg-zinc-950 text-white border-white/10;
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-white via-white to-gray-500;
+  }
+
+  .streaming-cursor::after {
+    content: '▋';
+    @apply text-cyan-500 ml-0.5 animate-pulse;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 10px rgba(139, 92, 246, 0.3); }
+    50% { box-shadow: 0 0 25px rgba(139, 92, 246, 0.6); }
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s infinite;
   }
 }
 

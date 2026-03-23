@@ -22,7 +22,7 @@ The platform's core value proposition is **granular, per-MCP-server permission c
 - **MCP SDK:** `@modelcontextprotocol/sdk` (official Anthropic SDK)
 - **Database:** SQLite via `better-sqlite3` (embedded, zero-infra) with Drizzle ORM
 - **Process management:** Node.js `child_process` for spawning MCP servers via stdio
-- **Auth:** Simple token-based auth (JWT) — no OAuth complexity for v1
+- **Auth:** JWT (`@fastify/jwt`) + bcrypt — full email/password registration and login, role-based access (Super Admin / Admin / User / Pending), rate-limited login, and per-user BYOK API key cascade
 - **WebSockets:** `ws` or Fastify's built-in WS plugin for streaming agent responses
 - **Queue/Task:** `p-queue` for rate limiting LLM and MCP calls
 - **Config:** `zod` for all config schema validation
@@ -47,52 +47,78 @@ The platform's core value proposition is **granular, per-MCP-server permission c
 ```
 /
 ├── packages/
-│   ├── server/                   # Backend (Node.js)
-│   │   ├── src/
-│   │   │   ├── index.ts          # Fastify entry point
-│   │   │   ├── agent/
-│   │   │   │   ├── runtime.ts    # Core agentic loop
-│   │   │   │   ├── planner.ts    # Plan mode logic
-│   │   │   │   └── session.ts    # Session/conversation management
-│   │   │   ├── mcp/
-│   │   │   │   ├── client.ts     # MCP client (stdio + HTTP transports)
-│   │   │   │   ├── registry.ts   # MCP server registry
-│   │   │   │   └── guard.ts      # Permission enforcement layer
-│   │   │   ├── llm/
-│   │   │   │   ├── provider.ts   # LLM provider abstraction
-│   │   │   │   ├── anthropic.ts  # Anthropic adapter
-│   │   │   │   ├── openai.ts     # OpenAI adapter
-│   │   │   │   └── ollama.ts     # Ollama (local model) adapter
-│   │   │   ├── permissions/
-│   │   │   │   ├── store.ts      # Permission CRUD (SQLite)
-│   │   │   │   └── evaluator.ts  # Policy evaluation engine
-│   │   │   ├── routes/
-│   │   │   │   ├── chat.ts       # WebSocket chat endpoint
-│   │   │   │   ├── servers.ts    # MCP server management REST API
-│   │   │   │   ├── permissions.ts# Permission management REST API
-│   │   │   │   └── settings.ts   # Global settings REST API
-│   │   │   ├── db/
-│   │   │   │   ├── schema.ts     # Drizzle schema
-│   │   │   │   └── migrations/
-│   │   │   └── config.ts         # Zod-validated config loader
-│   │   ├── Dockerfile
-│   │   └── package.json
-│   └── web/                      # Frontend (React)
-│       ├── src/
-│       │   ├── main.tsx
-│       │   ├── pages/
-│       │   │   ├── Chat.tsx          # Main agent chat interface
-│       │   │   ├── Servers.tsx       # MCP server management
-│       │   │   ├── Permissions.tsx   # Granular permission editor
-│       │   │   ├── ActivityLog.tsx   # Tool call audit log
-│       │   │   └── Settings.tsx      # LLM providers, API keys, app config
-│       │   ├── components/
-│       │   ├── stores/
-│       │   └── hooks/
-│       └── package.json
+│   ├── server/src/
+│   │   ├── index.ts              # Fastify entry point
+│   │   ├── config.ts             # Zod-validated config loader (env + DB cascade)
+│   │   ├── agent/
+│   │   │   ├── runtime.ts        # Core agentic loop (streaming, tool dispatch)
+│   │   │   ├── planner.ts        # Plan mode logic
+│   │   │   ├── session.ts        # Session/conversation management
+│   │   │   ├── agenticRun.ts     # Agentic plan executor
+│   │   │   ├── toolInterceptor.ts# Human-in-the-loop approval state machine
+│   │   │   ├── canary.ts         # Canary token injection/detection
+│   │   │   ├── prompts.ts        # System prompt assembly
+│   │   │   └── pipeline/         # Pipeline agent runner
+│   │   ├── mcp/
+│   │   │   ├── client.ts         # MCP client (stdio + HTTP transports)
+│   │   │   └── registry.ts       # MCP server registry & lifecycle
+│   │   ├── llm/
+│   │   │   ├── provider.ts       # LLM provider abstraction
+│   │   │   ├── anthropic.ts      # Anthropic adapter
+│   │   │   ├── openai.ts         # OpenAI adapter
+│   │   │   └── ollama.ts         # Ollama adapter (+ hallucination retry)
+│   │   ├── permissions/
+│   │   │   ├── store.ts          # Permission CRUD (SQLite)
+│   │   │   └── evaluator.ts      # PermissionGuard policy engine
+│   │   ├── pipelines/
+│   │   │   ├── manager.ts        # Pipeline lifecycle manager
+│   │   │   ├── runner.ts         # Shared pipeline agent runner
+│   │   │   ├── discord.ts        # Discord bot pipeline
+│   │   │   ├── telegram.ts       # Telegram bot pipeline
+│   │   │   └── line.ts           # LINE webhook pipeline
+│   │   ├── routes/
+│   │   │   ├── auth.ts           # Register, login, /me
+│   │   │   ├── admin.ts          # Admin user management
+│   │   │   ├── chat.ts           # WebSocket streaming chat
+│   │   │   ├── agentic.ts        # Agentic mode REST endpoints
+│   │   │   ├── execute.ts        # Direct tool execution endpoints
+│   │   │   ├── servers.ts        # MCP server CRUD + start/stop
+│   │   │   ├── permissions.ts    # Permission editor API
+│   │   │   ├── sessions.ts       # Session + message CRUD
+│   │   │   ├── activity.ts       # Audit log API
+│   │   │   ├── pipelines.ts      # Pipeline CRUD + start/stop
+│   │   │   ├── registry.ts       # MCP Catalog (curated + official registry)
+│   │   │   ├── settings.ts       # Global & per-user settings API
+│   │   │   ├── ollama.ts         # Ollama proxy/model list
+│   │   │   └── model-check.ts    # Model availability check
+│   │   └── db/
+│   │       ├── schema.ts         # Drizzle schema (users, sessions, servers, …)
+│   │       └── migrate.ts        # DB migration runner
+│   └── web/src/
+│       ├── App.tsx               # Root layout, sidebar, session grouping
+│       ├── main.tsx
+│       ├── api.ts                # Typed apiFetch helper
+│       ├── pages/
+│       │   ├── Auth.tsx          # Login / register
+│       │   ├── Chat.tsx          # Streaming chat + approval UI
+│       │   ├── Servers.tsx       # MCP server management
+│       │   ├── Catalog.tsx       # MCP Catalog (browse & install)
+│       │   ├── Permissions.tsx   # Granular permission editor
+│       │   ├── AuditLog.tsx      # Tool call audit log
+│       │   ├── Pipelines.tsx     # Pipeline management
+│       │   ├── Settings.tsx      # User settings & BYOK keys
+│       │   ├── Admin.tsx         # Admin panel (users, stats)
+│       │   ├── Pending.tsx       # Awaiting-approval holding page
+│       │   └── Forbidden.tsx     # 403 page
+│       ├── components/           # Shared UI (ServerPermissionDrawer, UserMenu, …)
+│       └── contexts/
+│           └── AuthContext.tsx   # JWT auth state
+├── Dockerfile
 ├── docker-compose.yml
-├── docker-compose.dev.yml
-└── AGENTS.md
+├── AGENTS.md
+├── TODO.md
+├── SECURITY_HARDENING.md
+└── PROMPT_INJECTION_LAYER.md
 ```
 
 ---
@@ -121,16 +147,24 @@ User message
 - On context compaction, summarize and continue — never truncate silently
 - Support parallel tool calls when the LLM requests multiple tools simultaneously
 
-### PermissionGuard (`mcp/guard.ts`)
+### PermissionGuard (`permissions/evaluator.ts`)
 
-**The most critical component.** Every single MCP tool call MUST pass through `PermissionGuard.evaluate()` before execution. No exceptions.
+**The most critical component.** Every single MCP tool call MUST pass through `evaluatePermission()` before execution. No exceptions.
 
 Permission evaluation order:
-1. Is the MCP server registered and enabled?
-2. Is the tool type allowed for this server?
-3. For filesystem tools: is the target path within allowed paths?
-4. For bash tools: does the command match allowed glob patterns?
-5. Rate limit check: has this server exceeded its call quota?
+1. Is the MCP server registered and running?
+2. Are permissions configured for this server?
+3. For filesystem tools: denied-path check → allowed-path check → per-operation flags (read/write/create/delete)
+4. For bash tools: is bash enabled? does the command match allowed glob patterns?
+5. For web fetch tools: is web fetch enabled? is the domain in the allowlist?
+6. Subprocess / network toggles
+7. Env var access: **hardcoded DENY** — not overridable
+8. **Trust Policy**: safe read-only tools in `trustedPaths` → `ALLOW_SILENT` (skip approval prompt)
+
+Verdicts:
+- `DENY` — blocked by policy, logged, returned to LLM as a structured denial
+- `REQUIRE_APPROVAL` — paused for human approval in the UI (default)
+- `ALLOW_SILENT` — auto-executed without prompting (opt-in via Trust Policy)
 
 On denial:
 - Log to activity log with full context (timestamp, server, tool, path, reason)
@@ -157,24 +191,28 @@ type ServerPermission = {
   // Filesystem
   allowedPaths: string[]
   deniedPaths: string[]
-  pathPermissions: {
-    read: boolean
-    write: boolean
-    create: boolean
-    delete: boolean
-    listDir: boolean
-  }
+  pathRead: boolean
+  pathWrite: boolean
+  pathCreate: boolean
+  pathDelete: boolean
+  pathListDir: boolean
   // Tool permissions
   bashAllowed: boolean
-  bashAllowedCommands: string[]   // glob patterns e.g. ["git *", "npm *"]
+  bashAllowedCommands: string[]         // glob patterns e.g. ["git *", "npm *"]
   webfetchAllowed: boolean
   webfetchAllowedDomains: string[]
   subprocessAllowed: boolean
   networkAllowed: boolean
-  envReadAllowed: false           // always false — not user-configurable
   // Rate limits
-  maxCallsPerMinute: number
+  maxCallsPerMinute: number             // default: 30
   maxTokensPerCall: number
+  // Prompt Injection Prevention
+  promptInjectionPrevention: boolean    // server-wide PIP toggle
+  toolPromptInjectionPrevention: Record<string, 'inherit' | 'enable' | 'disable'>
+  // Trust Policy (auto-approve reads)
+  autoApproveReads: boolean
+  trustedPaths: string[]                // reads under these paths → ALLOW_SILENT
+  // Env var access: hardcoded false — not stored, not configurable
 }
 ```
 
@@ -182,40 +220,95 @@ type ServerPermission = {
 
 ## REST API Design
 
+### Auth
+```
+GET    /api/auth/status          # Check if setup required + signup enabled
+POST   /api/auth/register        # Register new user (first user → Super Admin)
+POST   /api/auth/login           # Login (rate-limited: 5 attempts/min)
+GET    /api/auth/me              # Verify token + issue fresh JWT
+```
+
+### Admin (admin role required)
+```
+GET    /api/admin/stats          # Platform stats (user/session/message counts, DB size)
+GET    /api/admin/users          # List all users
+POST   /api/admin/users          # Create user
+PUT    /api/admin/users/:id      # Update user (name, email, role, password)
+DELETE /api/admin/users/:id      # Delete user
+```
+
 ### MCP Servers
 ```
-GET    /api/servers              # List all registered MCP servers
+GET    /api/servers              # List registered MCP servers
 POST   /api/servers              # Register a new MCP server
 GET    /api/servers/:id          # Get server details + status
-PUT    /api/servers/:id          # Update server config
+PUT    /api/servers/:id          # Update server config (auto-restarts)
 DELETE /api/servers/:id          # Remove server
 POST   /api/servers/:id/start    # Start server process
 POST   /api/servers/:id/stop     # Stop server process
 GET    /api/servers/:id/tools    # List tools exposed by server
+POST   /api/mcp/halt             # Emergency halt: abort all streams + disconnect all servers
+```
+
+### MCP Catalog
+```
+GET    /api/registry             # Curated + official MCP Registry servers (cached 5 min)
+GET    /api/registry?q=...       # Search by name/title/description
 ```
 
 ### Permissions
 ```
-GET    /api/permissions/:serverId          # Get all permissions for a server
-PUT    /api/permissions/:serverId          # Replace all permissions
-PATCH  /api/permissions/:serverId/paths    # Update path permissions
-PATCH  /api/permissions/:serverId/tools    # Update tool permissions
-PATCH  /api/permissions/:serverId/limits   # Update rate limits
+GET    /api/permissions/:serverId   # Get all permissions for a server
+PUT    /api/permissions/:serverId   # Replace all permissions
+```
+
+### Sessions & Messages
+```
+GET    /api/sessions                          # List sessions for current user
+POST   /api/sessions                          # Create session
+GET    /api/sessions/:id                      # Get session + messages
+PUT    /api/sessions/:id                      # Update session (title, pin, folder, mode)
+DELETE /api/sessions/:id                      # Delete session
+DELETE /api/sessions                          # Delete ALL sessions for current user
+DELETE /api/sessions/:id/messages             # Clear all messages in session
+DELETE /api/sessions/:id/messages/:messageId  # Soft-delete a single message
+POST   /api/sessions/:id/messages/:messageId/activate  # Activate a branched message
 ```
 
 ### Agent / Chat
 ```
-WS     /ws/chat                  # WebSocket: streaming chat + tool call events
-GET    /api/sessions             # List conversation sessions
-GET    /api/sessions/:id         # Get session with message history
-DELETE /api/sessions/:id         # Delete session
+WS     /ws/chat                    # WebSocket: streaming chat + tool call events
+POST   /api/execute                # Execute approved tool call (from approval card)
+GET    /api/agentic/...            # Agentic plan endpoints
 ```
 
 ### Activity Log
 ```
-GET    /api/activity             # Paginated activity log
-GET    /api/activity?serverId=X  # Filter by server
-GET    /api/activity?type=denied # Filter by outcome
+GET    /api/activity               # Paginated activity log
+GET    /api/activity?serverId=X    # Filter by server
+GET    /api/activity?outcome=DENY  # Filter by outcome
+```
+
+### Pipelines
+```
+GET    /api/pipelines              # List pipelines
+POST   /api/pipelines              # Create pipeline (discord/telegram/line)
+GET    /api/pipelines/:id          # Get pipeline details
+PUT    /api/pipelines/:id          # Update pipeline config
+DELETE /api/pipelines/:id          # Delete pipeline
+POST   /api/pipelines/:id/start    # Start pipeline
+POST   /api/pipelines/:id/stop     # Stop pipeline
+```
+
+### Settings
+```
+GET    /api/settings               # Global workspace settings (Super Admin only)
+PUT    /api/settings/:key          # Update global setting (Super Admin only)
+GET    /api/user/settings          # Current user's personal settings (BYOK keys, prefs)
+PUT    /api/user/settings          # Upsert a personal setting
+PUT    /api/user/settings/bulk     # Bulk-save personal settings
+DELETE /api/user/settings          # Clear all personal settings
+PUT    /api/user/profile           # Update profile (avatar upload via multipart)
 ```
 
 ---
@@ -237,47 +330,59 @@ Agent responses stream as structured JSON events:
 
 ## Web UI Pages
 
-### Chat (`/`)
+### Login / Register (`/login`, `/register`)
+- Email/password forms; first user auto-becomes Super Admin
+- Pending-approval holding page shown to users awaiting role upgrade
+
+### Chat (`/chat`, `/chat/:id`)
 - Full-screen streaming chat interface
 - Inline tool call events (collapsible): "🔧 Reading `/workspace/src/index.ts`..."
+- **Human-in-the-Loop approval cards** — review and edit tool input before execution
 - Denied tool calls shown inline in red with reason
-- Session sidebar: create, switch, delete sessions
+- Session sidebar: time-grouped buckets (Pinned / Today / Yesterday / Previous 7 Days / Older), collapse/expand, rename, pin, delete, JSON export
 - Model selector + agent mode toggle (Build / Plan)
+- Emergency halt button
 
 ### MCP Servers (`/servers`)
 - Table: name, transport, status (running/stopped/error/unhealthy), tool count
-- Add server form: name, transport type, command or URL, args, env vars
-- Per-server start/stop/remove controls
-- Server detail view: tools list, health status, recent connection log
+- Add server form: name, transport type, command or URL, args, env vars (JSON editor)
+- Per-server start/stop/remove/edit controls; inline edit mode
+
+### MCP Catalog (`/catalog`)
+- Curated + official MCP Registry servers; search/filter
+- One-click **Add & Start**; detects already-installed servers
+- Required env var keys highlighted per entry
 
 ### Permission Editor (`/permissions/:serverId`)
 - **Flagship UI feature — must be excellent**
-- Left panel: filesystem path manager
-  - Add/remove allowed paths with a folder path input
-  - Per-path toggles: Read / Write / Create / Delete / List
-  - Denied path overrides (red entries)
-- Right panel: tool permission toggles
-  - Bash: toggle + command allowlist (tag input for glob patterns)
-  - Web fetch: toggle + optional domain allowlist
-  - Subprocess spawning: toggle
-  - Network access: toggle
-  - Env var access: shown as permanently DISABLED with explanation
-- Bottom: rate limit controls (calls/min, max tokens/call)
-- Auto-save with toast confirmation on every change
+- Filesystem: allowed/denied path lists with per-operation toggles (R/W/Create/Delete/List)
+- Bash: toggle + glob-pattern command allowlist
+- Web fetch: toggle + optional domain allowlist
+- Subprocess / network: individual toggles
+- Env var access: shown as permanently DISABLED (hardcoded in evaluator)
+- **Prompt Injection Prevention (PIP)**: server-wide toggle + per-tool override (inherit/enable/disable)
+- **Auto-Approve Reads (Trust Policy)**: trusted-path zone that skips approval for safe reads
+- Rate limits: calls/min + max tokens/call
+- Auto-saves on every change with toast confirmation
 
-### Activity Log (`/activity`)
-- Real-time live feed of all tool calls
-- Columns: timestamp, server, tool, action/path, outcome (allowed/denied), latency
-- Color coded: green = allowed, red = denied
-- Filters: server, tool type, outcome, date range
-- Expandable rows: full request input + response/denial reason
+### Audit Log (`/activity`)
+- Real-time live feed; auto-refreshes every 3 s
+- Columns: timestamp, server, tool, outcome (`ALLOWED` / `⚡ AUTO` / `403 DENIED`), latency
+- Expandable rows: full input payload + denial reason
+- Filters: server, outcome, free-text search
+
+### Pipelines (`/pipelines`)
+- Discord, Telegram, LINE pipeline cards
+- Per-pipeline start/stop/edit/delete; shared session selector
 
 ### Settings (`/settings`)
-- **LLM Providers**: API key fields for Anthropic, OpenAI, Ollama URL — stored encrypted
-- **Default Model**: dropdown from configured providers
-- **Agent Behavior**: maxSteps, temperature, system prompt override textarea
-- **Auth**: access token management for the web UI itself
-- **Data**: export config as JSON, clear conversation history
+- Per-user BYOK API keys (Anthropic, OpenAI) — override workspace defaults
+- UI preference toggles; password change
+- PWA install prompt; push notification management
+
+### Admin (`/admin`) — admin role required
+- User management table: view, create, edit, delete users; role assignment
+- Platform stats: total users, sessions, messages, DB size
 
 ---
 
@@ -303,7 +408,13 @@ services:
       - DATABASE_URL=/data/app.db
       - DATA_DIR=/data
       - PORT=3000
-      - AUTH_TOKEN=${AUTH_TOKEN}
+      - AUTH_TOKEN=${AUTH_TOKEN}        # Legacy static token (optional)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEFAULT_MODEL=claude-sonnet-4-5-20250929
+      - DEFAULT_PROVIDER=anthropic
+      - ENABLE_SIGNUP=true               # Set to false to disable public registration
+      - DEFAULT_NEW_USER_ROLE=pending    # 'user' to auto-approve, 'pending' for admin review
     restart: unless-stopped
 ```
 
@@ -386,15 +497,40 @@ The user must explicitly grant permissions through the web UI before the agent c
 type(scope): short description
 
 Types: feat, fix, refactor, test, docs, chore, security
-Scopes: agent, mcp, permissions, ui, docker, api, db
+Scopes: agent, mcp, permissions, ui, docker, api, db, auth, admin, pipelines, catalog
 
 Examples:
   feat(permissions): add per-path write toggle in permission editor UI
-  security(guard): enforce env var read denial at evaluator level
+  security(permissions): enforce env var read denial at evaluator level
   feat(mcp): implement HTTP/SSE transport for remote MCP servers
   fix(agent): handle parallel tool calls in agentic loop
   feat(ui): add real-time tool call feed to chat page
+  feat(auth): add pending-approval flow for new user registrations
+  feat(admin): add user management panel with role assignment
+  feat(pipelines): add Telegram long-polling bot pipeline
   feat(docker): add multi-stage Dockerfile with static frontend serving
+```
+
+---
+
+## TODO.md — Keeping the Backlog Current
+
+The project backlog lives in [`TODO.md`](./TODO.md) at the repo root.
+
+**When starting work:**
+- Check `TODO.md` to see if the feature/fix you're implementing is already tracked.
+- If it is, note the item so you can mark it done when finished.
+
+**When finishing work:**
+- Mark the relevant item(s) in `TODO.md` as complete by changing `- [ ]` to `- [x]`.
+- If your work surfaces a new bug, gap, or follow-up task that isn't already listed, add it under the appropriate category.
+- Keep item descriptions concise and in the same style as the existing entries.
+- Do **not** delete completed items — checked items serve as a lightweight changelog.
+
+**Example:**
+```diff
+-  - [ ] Add a Chat History page (`/chat/history`) — paginated list of all sessions
++  - [x] Add a Chat History page (`/chat/history`) — paginated list of all sessions
 ```
 
 ---

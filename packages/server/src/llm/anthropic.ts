@@ -13,19 +13,26 @@ export class AnthropicProvider implements LLMProvider {
   ];
 
   private client: Anthropic | null = null;
+  private clientApiKey: string | null = null;
 
   private getClient(): Anthropic {
-    if (!this.client) {
-      const config = getConfig();
-      const db = getDb();
-      const settings = db.select(schema.settings as any).where().all() as any[];
-      const apiKeySetting = settings.find((s: any) => s.key === 'ANTHROPIC_API_KEY');
-      const apiKey = apiKeySetting?.value || config.ANTHROPIC_API_KEY;
-      
-      if (!apiKey) {
-        throw new Error('ANTHROPIC_API_KEY not configured');
-      }
+    const config = getConfig();
+    const db = getDb();
+    // Check global settings table first, then fall back to env
+    const globalSettings = db.select(schema.settings as any).where().all() as any[];
+    const globalKeySetting = globalSettings.find((s: any) => s.key === 'ANTHROPIC_API_KEY');
+    // Also check user_settings (written by the Settings page)
+    const userSettings = db.select('user_settings' as any).where().all() as any[];
+    const userKeySetting = userSettings.find((s: any) => s.key === 'ANTHROPIC_API_KEY');
+    const apiKey = userKeySetting?.value || globalKeySetting?.value || config.ANTHROPIC_API_KEY;
+
+    if (!apiKey) {
+      throw new Error('ANTHROPIC_API_KEY not configured');
+    }
+    // Rebuild client whenever the key changes (e.g. user saved a new key in Settings)
+    if (!this.client || this.clientApiKey !== apiKey) {
       this.client = new Anthropic({ apiKey });
+      this.clientApiKey = apiKey;
     }
     return this.client;
   }
@@ -34,12 +41,18 @@ export class AnthropicProvider implements LLMProvider {
     model: string,
     messages: Message[],
     tools: ToolDefinition[],
-    onDelta: (delta: StreamDelta) => void
+    onDelta: (delta: StreamDelta) => void | Promise<void>,
+    signal?: AbortSignal
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     const systemMessage = messages.find(m => m.role === 'system');
     const nonSystemMessages = messages.filter(m => m.role !== 'system');
 
-    const anthropicMessages = nonSystemMessages.map((msg): Anthropic.MessageParam => {
+    // Convert each internal Message to an Anthropic MessageParam, then merge
+    // consecutive messages of the same role into one.  The Anthropic API
+    // requires strict user/assistant alternation; consecutive user messages
+    // (e.g. multiple back-to-back tool_results) must be combined into a single
+    // user message with multiple content blocks.
+    const rawMapped = nonSystemMessages.map((msg): Anthropic.MessageParam => {
       if (msg.role === 'tool') {
         return {
           role: 'user',
@@ -65,7 +78,7 @@ export class AnthropicProvider implements LLMProvider {
           for (const tc of toolCalls) {
             content.push({
               type: 'tool_use',
-              id: msg.toolCallId || `call_${Date.now()}`,
+              id: tc.id || msg.toolCallId || `call_${Date.now()}`,
               name: tc.name,
               input: tc.arguments as any,
             });
@@ -81,6 +94,25 @@ export class AnthropicProvider implements LLMProvider {
         content: msg.content,
       };
     });
+
+    // Merge consecutive messages that share the same role into one message.
+    // This is required because the Anthropic API mandates strict alternation.
+    const anthropicMessages: Anthropic.MessageParam[] = [];
+    for (const msg of rawMapped) {
+      const prev = anthropicMessages[anthropicMessages.length - 1];
+      if (prev && prev.role === msg.role) {
+        // Merge content into the existing message
+        const prevContent = Array.isArray(prev.content)
+          ? prev.content
+          : [{ type: 'text' as const, text: prev.content as string }];
+        const newContent = Array.isArray(msg.content)
+          ? msg.content
+          : [{ type: 'text' as const, text: msg.content as string }];
+        prev.content = [...prevContent, ...newContent];
+      } else {
+        anthropicMessages.push({ ...msg });
+      }
+    }
 
     const toolUse: Anthropic.Tool[] = tools.map(tool => ({
       name: tool.name,
@@ -100,7 +132,7 @@ export class AnthropicProvider implements LLMProvider {
       system: systemMessage?.content,
       messages: anthropicMessages,
       tools: toolUse.length > 0 ? toolUse : undefined,
-    });
+    }, { signal });
 
     let currentToolCall: { id: string; name: string; input: Record<string, unknown> } | null = null;
     let currentToolInputBuffer = '';
@@ -139,7 +171,10 @@ export class AnthropicProvider implements LLMProvider {
           } catch (e) {
             console.error('[Anthropic] Failed to parse tool input JSON:', currentToolInputBuffer, e);
           }
-          onDelta({
+          // AWAIT so that approval gates (e.g. Discord reactions) finish before
+          // the provider processes the next tool_use block. Without this, all
+          // tool calls in a parallel batch fire their approval embeds simultaneously.
+          await onDelta({
             type: 'tool_use',
             toolCall: { ...currentToolCall },
           });

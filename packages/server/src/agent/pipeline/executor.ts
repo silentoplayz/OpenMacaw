@@ -120,13 +120,13 @@ export async function executeStep(
                     }
 
                     // Stage 3: PermissionGuard check
-                    const permResult = evaluatePermission({
+                    const permResult = await evaluatePermission({
                         serverId: sId,
                         toolName: tName,
                         toolInput: delta.toolCall.input,
                     });
 
-                    if (!permResult.allowed) {
+                    if (permResult.verdict === 'DENY') {
                         console.warn(`[ExecutorAgent] DENIED by PermissionGuard: ${permResult.reason}`);
                         wsEmit({ type: 'tool_call_result', outcome: 'denied', reason: permResult.reason });
                         rawOutput += `\n[Tool call denied by PermissionGuard: ${permResult.reason}]`;
