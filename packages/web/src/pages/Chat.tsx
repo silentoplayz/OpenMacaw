@@ -921,6 +921,7 @@ interface Message {
   // denied    = user denied (show collapsed denied card)
   status?: 'pending' | 'approved' | 'executed' | 'denied' | 'agentic_plan' | 'agentic_running' | 'agentic_done' | 'agentic_cancelled' | string;
   // ── Agentic run metadata ──────────────────────────────────────────────────────
+  parentId?: string;
   agenticRunId?: string;
   agenticPlan?: { id: string; description: string; tool?: string; server?: string }[];
   agenticGoal?: string;
