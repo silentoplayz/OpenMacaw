@@ -1925,7 +1925,7 @@ export default function Chat() {
             )}
           </div>
         )}
-        <div className="flex-1 overflow-y-auto w-full flex flex-col">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col">
           {chatError && (
             <div className="w-full max-w-4xl mx-auto px-4 mt-3">
               <div className="flex items-start gap-3 p-3 bg-rose-950/40 border border-rose-500/30 rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.1)]">
@@ -2221,7 +2221,7 @@ export default function Chat() {
                               <ToolsUsedHeader tools={toolsForHeader} />
 
                               {cleaned ? (
-                                <div className={`text-sm text-gray-300 gap-4 leading-relaxed prose prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-transparent prose-pre:p-0 ${isStreamingMsg ? 'streaming-cursor' : ''}`}>
+                                <div className={`text-sm text-gray-300 gap-4 leading-relaxed break-words prose prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-transparent prose-pre:p-0 ${isStreamingMsg ? 'streaming-cursor' : ''}`}>
                                   <ReactMarkdown
                                     remarkPlugins={[remarkGfm, remarkMath]}
                                     rehypePlugins={[rehypeKatex]}
