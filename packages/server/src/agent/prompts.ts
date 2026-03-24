@@ -53,14 +53,30 @@ Once you see "Tool Output" in the conversation, your job is to READ and ANALYZE 
  * the operator can layer stylistic or domain-specific behaviour on top of the
  * base prompt without overriding its safety constraints.
  */
-export function buildSystemPrompt(personality?: string): string {
-  if (!personality || personality.trim() === '') {
-    return FORCEFUL_SYSTEM_PROMPT;
+export interface ActiveSkill {
+  name: string;
+  instructions: string;
+  toolHints?: string[];
+}
+
+export function buildSystemPrompt(personality?: string, skills?: ActiveSkill[]): string {
+  let prompt = FORCEFUL_SYSTEM_PROMPT;
+
+  if (personality && personality.trim() !== '') {
+    prompt += `\n\n## Personality & Style\n\n${personality.trim()}`;
   }
 
-  return `${FORCEFUL_SYSTEM_PROMPT}
+  if (skills && skills.length > 0) {
+    prompt += '\n\n---\n\n## Active Skills\n\nThe following skills are active for this session. Follow their instructions when relevant.\n';
 
-## Personality & Style
+    for (const skill of skills) {
+      prompt += `\n### Skill: ${skill.name}\n\n${skill.instructions.trim()}`;
+      if (skill.toolHints && skill.toolHints.length > 0) {
+        prompt += `\n\n> **Suggested tools for this skill:** ${skill.toolHints.join(', ')}`;
+      }
+      prompt += '\n';
+    }
+  }
 
-${personality.trim()}`;
+  return prompt;
 }

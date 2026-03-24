@@ -35,6 +35,7 @@ import {
   agenticRoutes,
   authRoutes,
   adminRoutes,
+  skillsRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -146,6 +147,7 @@ export async function buildApp() {
   await fastify.register(agenticRoutes);
   await fastify.register(authRoutes);
   await fastify.register(adminRoutes);
+  await fastify.register(skillsRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');

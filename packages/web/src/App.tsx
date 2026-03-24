@@ -6,7 +6,7 @@ import {
   MessageSquare, Server, Activity, Settings, Bird,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun, PenSquare,
   ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert, CheckCircle2, Circle, Crosshair, Target,
-  MoreHorizontal, Pin, Download, Edit2, FolderClosed, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen
+  MoreHorizontal, Pin, Download, Edit2, FolderClosed, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Zap
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -504,6 +504,7 @@ function App() {
   const navItems = [
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/servers', label: 'Servers', icon: Server },
+    { path: '/skills', label: 'Skills', icon: Zap },
     { path: '/catalog', label: 'Catalog', icon: BookMarked },
     { path: '/activity', label: 'Audit Log', icon: Activity },
     { path: '/pipelines', label: 'Pipelines', icon: Workflow },

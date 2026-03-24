@@ -75,6 +75,7 @@ export const sessions = sqliteTable('sessions', {
   mode: text('mode').notNull().default('build'),
   isPinned: integer('is_pinned').notNull().default(0),
   folderId: text('folder_id'),
+  activeSkillIds: text('active_skill_ids').notNull().default('[]'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
@@ -149,5 +150,31 @@ export type ActivityLogEntry = typeof activityLog.$inferSelect;
 export type PipelineLogEntry = typeof pipelineLog.$inferSelect;
 export type Pipeline = typeof pipelines.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+export const skills = sqliteTable('skills', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  instructions: text('instructions').notNull().default(''),
+  toolHints: text('tool_hints').notNull().default('[]'),
+  triggers: text('triggers').notNull().default('[]'),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  isGlobal: integer('is_global').notNull().default(0),
+  enabled: integer('enabled').notNull().default(1),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const skillVersions = sqliteTable('skill_versions', {
+  id: text('id').primaryKey(),
+  skillId: text('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  instructions: text('instructions').notNull(),
+  changedBy: text('changed_by').references(() => users.id, { onDelete: 'set null' }),
+  changeNote: text('change_note'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+export type Skill = typeof skills.$inferSelect;
+export type SkillVersion = typeof skillVersions.$inferSelect;
 export type User = typeof users.$inferSelect;
 

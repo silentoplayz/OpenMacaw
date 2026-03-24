@@ -90,11 +90,37 @@ sqlite.exec(`
     updated_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    tool_hints TEXT NOT NULL DEFAULT '[]',
+    triggers TEXT NOT NULL DEFAULT '[]',
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    is_global INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS skill_versions (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    instructions TEXT NOT NULL,
+    changed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    change_note TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_permissions_server ON permissions(server_id);
   CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
   CREATE INDEX IF NOT EXISTS idx_activity_session ON activity_log(session_id);
   CREATE INDEX IF NOT EXISTS idx_activity_server ON activity_log(server_id);
   CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id);
+  CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id);
 `);
 
 console.log('Database initialized successfully');

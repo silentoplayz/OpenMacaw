@@ -2,6 +2,9 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
 import { getActiveSettingsForUser } from '../config.js';
+import { getDrizzleDb } from '../db/index.js';
+import * as dbSchema from '../db/schema.js';
+import { eq, and, or } from 'drizzle-orm';
 
 const chatSchema = z.discriminatedUnion('type', [
   z.object({
@@ -138,6 +141,42 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             }
           };
 
+          // ── Slash-command trigger: match /command against skill triggers ──────
+          let resolvedMessage = userMessage;
+          if (userMessage && userMessage.startsWith('/')) {
+            const slashMatch = userMessage.match(/^(\/[a-z0-9_-]+)\s*([\s\S]*)$/i);
+            if (slashMatch) {
+              const trigger = slashMatch[1].toLowerCase();
+              const remainder = slashMatch[2].trim();
+              try {
+                const db = getDrizzleDb();
+                const allSkills = await db.select().from(dbSchema.skills)
+                  .where(
+                    and(
+                      eq(dbSchema.skills.enabled, 1),
+                      or(
+                        eq(dbSchema.skills.userId, session.userId),
+                        eq(dbSchema.skills.isGlobal, 1)
+                      )
+                    )
+                  );
+                const matched = allSkills.find(s => {
+                  try {
+                    const triggers: string[] = JSON.parse(s.triggers || '[]');
+                    return triggers.some(t => t.toLowerCase() === trigger);
+                  } catch { return false; }
+                });
+                if (matched) {
+                  // Prepend skill instructions to the user message
+                  resolvedMessage = `[Skill: ${matched.name}]\n${matched.instructions}\n\n---\nUser request: ${remainder || userMessage}`;
+                  console.log(`[WebSocket] Slash-command ${trigger} matched skill "${matched.name}"`);
+                }
+              } catch (err) {
+                console.warn('[WebSocket] Slash-command skill lookup failed:', err);
+              }
+            }
+          }
+
           try {
             await createAgentRuntime(
               {
@@ -149,7 +188,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
                 signal: abortCtrl.signal,
               },
               liveEventHandler
-            ).run(userMessage);
+            ).run(resolvedMessage);
           } finally {
             // Always clean up — whether run completed, errored, or was aborted
             sessionAbortControllers.delete(sessionId);
