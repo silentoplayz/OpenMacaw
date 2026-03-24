@@ -29,5 +29,6 @@ export {
   restartPipelineAsync,
   restorePipelinesAsync,
   getLinePipeline,
+  getDiscordPipeline,
   isRunning,
 } from './manager.js';

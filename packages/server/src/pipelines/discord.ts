@@ -29,7 +29,7 @@ import {
   type AgenticCheckpointFn,
   type Proposal,
 } from './runner.js';
-import { createSession, getSession } from '../agent/session.js';
+import { createSession, getSession, deleteSession } from '../agent/session.js';
 import { getDb, schema } from '../db/index.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -161,6 +161,22 @@ export class DiscordPipeline {
       (session.personality ? ` (personality: ${session.personality.substring(0, 60)}…)` : ' (no personality)'),
     );
     return session.id;
+  }
+
+  // ── Session management ───────────────────────────────────────────────────
+
+  /**
+   * Delete every session that this adapter has created and clear the in-memory
+   * cache so new conversations start fresh with the current global personality.
+   * Returns the number of sessions deleted.
+   */
+  clearAllSessions(): number {
+    let count = 0;
+    for (const [, sessionId] of this.contextSessions) {
+      try { deleteSession(sessionId); count++; } catch { /* already gone */ }
+    }
+    this.contextSessions.clear();
+    return count;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

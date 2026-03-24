@@ -190,6 +190,13 @@ export function getLinePipeline(id: string): LinePipeline | null {
   return null;
 }
 
+/** Retrieve a running Discord adapter by pipeline ID. */
+export function getDiscordPipeline(id: string): DiscordPipeline | null {
+  const adapter = runningAdapters.get(id);
+  if (adapter instanceof DiscordPipeline) return adapter;
+  return null;
+}
+
 export function isRunning(id: string): boolean {
   return runningAdapters.has(id);
 }

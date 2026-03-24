@@ -382,6 +382,19 @@ function PipelineRow({
     onMutated();
   };
 
+  const [clearing, setClearing] = useState(false);
+
+  const handleClearSessions = async () => {
+    if (!window.confirm('Clear all Discord sessions for this pipeline? New sessions will use the current global personality.')) return;
+    setClearing(true);
+    try {
+      const res = await apiFetch(`/api/pipelines/${pipeline.id}/clear-sessions`, { method: 'POST' });
+      const data = await res.json();
+      window.alert(`Cleared ${data.deleted ?? 0} session(s).`);
+    } catch { /* ignore */ }
+    setClearing(false);
+  };
+
   const handleCopyWebhook = async () => {
     await navigator.clipboard.writeText(webhookUrl);
     setCopied(true);
@@ -544,7 +557,17 @@ function PipelineRow({
             </div>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {pipeline.type === 'discord' && pipeline.running && (
+              <button
+                onClick={handleClearSessions}
+                disabled={clearing}
+                className="flex items-center gap-2 px-4 py-2 bg-red-950/30 border border-red-500/50 hover:bg-red-900/40 text-red-400 hover:text-red-300 text-xs font-mono font-bold uppercase tracking-wider rounded transition-all disabled:opacity-50"
+              >
+                {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Clear Sessions
+              </button>
+            )}
             <button
               onClick={handleSave}
               disabled={saving}
