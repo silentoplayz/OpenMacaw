@@ -167,7 +167,7 @@ function AddPipelineModal({
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError('Name is required'); return; }
-    if (!sessionId) { setError('Select a session'); return; }
+    if (type !== 'discord' && !sessionId) { setError('Select a session'); return; }
     setSaving(true);
     setError('');
     try {
@@ -177,7 +177,7 @@ function AddPipelineModal({
         body: JSON.stringify({
           name: name.trim(),
           type,
-          sessionId,
+          ...(type !== 'discord' ? { sessionId } : {}),
           config: buildConfig(type, rawConfig),
         }),
       });
@@ -249,22 +249,24 @@ function AddPipelineModal({
             <p className="text-[10px] text-gray-500 mt-2 italic leading-relaxed">{TYPE_META[type].description}</p>
           </div>
 
-          {/* Session */}
-          <div>
-            <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
-            <select
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            >
-              {sessions.length === 0 && (
-                <option value="">No sessions available — create one in Chat first</option>
-              )}
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
-              ))}
-            </select>
-          </div>
+          {/* Session — hidden for Discord (sessions are auto-isolated per server/DM) */}
+          {type !== 'discord' && (
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
+              <select
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {sessions.length === 0 && (
+                  <option value="">No sessions available — create one in Chat first</option>
+                )}
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Config fields */}
           <div className="space-y-3">
@@ -372,7 +374,7 @@ function PipelineRow({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sessionId: editSessionId,
+        ...(pipeline.type !== 'discord' ? { sessionId: editSessionId } : {}),
         config: buildConfig(pipeline.type, editRaw),
       }),
     });
@@ -386,7 +388,9 @@ function PipelineRow({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const sessionTitle = sessions.find((s) => s.id === pipeline.sessionId)?.title ?? pipeline.sessionId ?? '—';
+  const sessionTitle = pipeline.type === 'discord'
+    ? 'Auto-isolated per server/DM'
+    : (sessions.find((s) => s.id === pipeline.sessionId)?.title ?? pipeline.sessionId ?? '—');
 
   return (
     <div className="border border-white/5 rounded-lg bg-zinc-950/30 overflow-hidden backdrop-blur-sm transition-all hover:bg-zinc-900/50 hover:border-white/10 group">
@@ -464,19 +468,29 @@ function PipelineRow({
       {/* Expanded config editor */}
       {expanded && (
         <div className="border-t border-white/5 px-4 py-4 space-y-3 bg-black/40">
-          {/* Session picker */}
-          <div>
-            <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
-            <select
-              value={editSessionId}
-              onChange={(e) => setEditSessionId(e.target.value)}
-              className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            >
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
-              ))}
-            </select>
-          </div>
+          {/* Session picker — hidden for Discord (sessions are auto-isolated per server/DM) */}
+          {pipeline.type === 'discord' ? (
+            <div className="flex items-start gap-3 px-4 py-3 bg-indigo-950/20 border border-indigo-500/20 rounded-lg text-xs text-indigo-300">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Discord sessions are automatically isolated per server and per DM.
+                Each server and each DM conversation has its own independent session.
+              </span>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
+              <select
+                value={editSessionId}
+                onChange={(e) => setEditSessionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Config fields */}
           {CONFIG_FIELDS[pipeline.type].map((field) => (
@@ -608,7 +622,7 @@ export default function Pipelines() {
             <Workflow className="w-10 h-10 text-gray-700 mb-4" />
             <p className="text-sm font-mono text-gray-400 mb-1">No pipelines configured</p>
             <p className="text-xs text-gray-600 mb-6 max-w-sm">
-              Pipelines let external services — Discord, Telegram, LINE — talk to your agent through a shared session.
+              Pipelines let external services — Discord, Telegram, LINE — talk to your agent.
             </p>
             <button
               onClick={() => setShowModal(true)}

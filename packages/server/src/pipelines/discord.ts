@@ -29,8 +29,7 @@ import {
   type AgenticCheckpointFn,
   type Proposal,
 } from './runner.js';
-import { createSession } from '../agent/session.js';
-import { updatePipeline } from './manager.js';
+import { createSession, getSession } from '../agent/session.js';
 import { getDb, schema } from '../db/index.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -94,8 +93,51 @@ export class DiscordPipeline {
    */
   private readonly pendingApprovals = new Map<string, PendingApproval>();
 
+  /**
+   * Per-context session isolation.  Each Discord guild and each DM channel
+   * gets its own independent session so conversations never leak across
+   * servers or between DMs.
+   *
+   * Key format: `guild:<guildId>` or `dm:<channelId>`
+   */
+  private readonly contextSessions = new Map<string, string>();
+
   constructor(record: PipelineRecord) {
     this.record = record;
+  }
+
+  // ── Context-based session resolution ──────────────────────────────────────
+
+  /**
+   * Returns a context key that uniquely identifies the conversation scope.
+   * Guild messages → `guild:<guildId>`, DMs → `dm:<channelId>`.
+   */
+  private static contextKey(message: Message | ChatInputCommandInteraction): string {
+    if (message.guildId) return `guild:${message.guildId}`;
+    return `dm:${message.channelId}`;
+  }
+
+  /**
+   * Resolves (or lazily creates) an isolated session for the given context.
+   * The session is cached in `contextSessions` for the lifetime of the adapter.
+   */
+  private resolveSessionForContext(contextKey: string): string {
+    const existing = this.contextSessions.get(contextKey);
+    if (existing) {
+      // Verify it still exists in the DB (user may have deleted it from the web UI).
+      const session = getSession(existing);
+      if (session) return existing;
+    }
+
+    // Determine a human-friendly title for the new session.
+    const [kind, id] = contextKey.split(':', 2);
+    const label = kind === 'guild' ? `Server ${id}` : `DM ${id}`;
+    const session = createSession({ title: `${this.record.name} — ${label}` });
+    this.contextSessions.set(contextKey, session.id);
+    console.log(
+      `[Discord Pipeline: ${this.record.name}] Created session ${session.id} for context ${contextKey}`,
+    );
+    return session.id;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -103,10 +145,8 @@ export class DiscordPipeline {
   async startAsync(): Promise<void> {
     const cfg = this.record.config as DiscordConfig;
     if (!cfg.botToken) throw new Error('Discord pipeline requires a botToken');
-    if (!this.record.sessionId) throw new Error('Discord pipeline requires an assigned session');
 
     const pipelineName = this.record.name;
-    const pipelineId   = this.record.id;
 
     this.client = new Client({
       intents: [
@@ -181,7 +221,6 @@ export class DiscordPipeline {
             this.handleAgentCommandAsync(
               interaction as ChatInputCommandInteraction,
               pipelineName,
-              pipelineId,
             ).catch((err) => {
               console.error(`[Discord Pipeline: ${pipelineName}] /agent error:`, err);
             });
@@ -236,7 +275,9 @@ export class DiscordPipeline {
         return;
       }
 
-      this.handleMessageAsync(message, content, this.record.sessionId!, pipelineName, pipelineId).catch(
+      const ctxKey = DiscordPipeline.contextKey(message);
+      const sessionId = this.resolveSessionForContext(ctxKey);
+      this.handleMessageAsync(message, content, sessionId, pipelineName, ctxKey).catch(
         (err) => console.error(`[Discord Pipeline: ${pipelineName}] Unhandled message error:`, err),
       );
     });
@@ -306,7 +347,7 @@ export class DiscordPipeline {
     content: string,
     sessionId: string,
     pipelineName: string,
-    pipelineId: string,
+    contextKey?: string,
   ): Promise<void> {
     console.log(
       `[Discord Pipeline: ${pipelineName}] Message from ${message.author.tag}: ${content.substring(0, 80)}`,
@@ -329,10 +370,10 @@ export class DiscordPipeline {
     // ── Session recovery ──────────────────────────────────────────────────────
     const sessionRecoveryFn = async (): Promise<string | null> => {
       try {
-        const newSession = createSession({ title: `${pipelineName} Conversation` });
-        updatePipeline(pipelineId, { sessionId: newSession.id });
-        this.record = { ...this.record, sessionId: newSession.id };
-        console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id}`);
+        const ck = contextKey ?? DiscordPipeline.contextKey(message);
+        const newSession = createSession({ title: `${pipelineName} — ${ck}` });
+        this.contextSessions.set(ck, newSession.id);
+        console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id} for context ${ck}`);
         return newSession.id;
       } catch (err) {
         console.error(`[Discord Pipeline: ${pipelineName}] Session recovery failed:`, err);
@@ -447,7 +488,6 @@ export class DiscordPipeline {
   private async handleAgentCommandAsync(
     interaction: ChatInputCommandInteraction,
     pipelineName: string,
-    pipelineId: string,
   ): Promise<void> {
     // ── Defer immediately so Discord doesn't show "interaction failed" ────────
     await interaction.deferReply();
@@ -457,13 +497,9 @@ export class DiscordPipeline {
       interaction.options.getBoolean('require_final_approval') ?? false;
     const authorId = interaction.user.id;
 
-    // Use the live sessionId (may have been updated by a previous recovery).
-    const sessionId = this.record.sessionId;
-    if (!sessionId) {
-      await interaction.followUp('No session is configured for this pipeline.').catch(() => undefined);
-      await interaction.deleteReply().catch(() => undefined);
-      return;
-    }
+    // Resolve the session for this context (guild or DM).
+    const ctxKey = DiscordPipeline.contextKey(interaction);
+    const sessionId = this.resolveSessionForContext(ctxKey);
 
     console.log(
       `[Discord Pipeline: ${pipelineName}] /agent from ${interaction.user.tag}: ${goal.substring(0, 80)}`,
@@ -503,10 +539,9 @@ export class DiscordPipeline {
     // ── Session recovery ──────────────────────────────────────────────────────
     const sessionRecoveryFn = async (): Promise<string | null> => {
       try {
-        const newSession = createSession({ title: `${pipelineName} Conversation` });
-        updatePipeline(pipelineId, { sessionId: newSession.id });
-        this.record = { ...this.record, sessionId: newSession.id };
-        console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id}`);
+        const newSession = createSession({ title: `${pipelineName} — ${ctxKey}` });
+        this.contextSessions.set(ctxKey, newSession.id);
+        console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id} for context ${ctxKey}`);
         return newSession.id;
       } catch (err) {
         console.error(`[Discord Pipeline: ${pipelineName}] Session recovery failed:`, err);
@@ -740,9 +775,10 @@ export class DiscordPipeline {
     // not broadcast to everyone in the channel.
     await interaction.deferReply({ ephemeral: true });
 
-    const sessionId = this.record.sessionId;
+    const ctxKey = DiscordPipeline.contextKey(interaction);
+    const sessionId = this.contextSessions.get(ctxKey);
     if (!sessionId) {
-      await interaction.editReply('No session is configured for this pipeline.');
+      await interaction.editReply('No conversation history exists for this context yet.');
       return;
     }
 
