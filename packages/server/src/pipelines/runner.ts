@@ -4,6 +4,7 @@ import { getMCPServer } from '../mcp/registry.js';
 import { extractServerIdFromToolName } from '../permissions/index.js';
 import { getDrizzleDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import {
   createAgenticRun,
@@ -246,6 +247,12 @@ export async function executeApprovedProposalsAsync(
       continue;
     }
 
+    // Mark the assistant proposal message as 'approved' (execution starting)
+    await db.update(schema.messages)
+      .set({ status: 'approved' })
+      .where(eq(schema.messages.toolCallId, proposal.id))
+      .catch((e) => console.error('[PipelineRunner] Failed to update proposal status:', e instanceof Error ? e.message : e));
+
     try {
       const result = await server.client.callTool(toolName, proposal.input);
       await db.insert(schema.messages).values({
@@ -258,6 +265,12 @@ export async function executeApprovedProposalsAsync(
       }).catch((e) =>
         console.error('[PipelineRunner] Failed to save tool-result message:', e instanceof Error ? e.message : e),
       );
+
+      // Mark the assistant proposal message as 'executed'
+      await db.update(schema.messages)
+        .set({ status: 'executed' })
+        .where(eq(schema.messages.toolCallId, proposal.id))
+        .catch((e) => console.error('[PipelineRunner] Failed to update proposal status:', e instanceof Error ? e.message : e));
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await db.insert(schema.messages).values({
@@ -285,6 +298,12 @@ export async function denyProposalsAsync(
 ): Promise<void> {
   const db = getDrizzleDb();
   for (const proposal of proposals) {
+    // Mark the assistant proposal message as 'denied'
+    await db.update(schema.messages)
+      .set({ status: 'denied' })
+      .where(eq(schema.messages.toolCallId, proposal.id))
+      .catch((e) => console.error('[PipelineRunner] Failed to update proposal status:', e instanceof Error ? e.message : e));
+
     await db.insert(schema.messages).values({
       id: nanoid(),
       sessionId,

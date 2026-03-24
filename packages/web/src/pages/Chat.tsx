@@ -81,6 +81,24 @@ function waitForSocket(ws: WebSocket | null): Promise<WebSocket> {
   });
 }
 
+// Polls wsRef.current until an OPEN socket appears (handles race between
+// session creation and the useEffect that creates the WebSocket).
+function waitForSocketRef(wsRef: React.MutableRefObject<WebSocket | null>): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5000;
+    const check = setInterval(() => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        clearInterval(check);
+        resolve(ws);
+      } else if (Date.now() > deadline) {
+        clearInterval(check);
+        reject(new Error('WebSocket connection timeout (ref polling)'));
+      }
+    }, 50);
+  });
+}
+
 
 // ── Collapsible "Denied" card ────────────────────────────────────────────────
 // Collapsed by default to keep the chat feed clean. Click to expand with reason.
@@ -1680,9 +1698,11 @@ export default function Chat() {
     try {
       // Auto-create a session if none exists
       let sid = currentSessionId;
+      let justCreated = false;
       if (!sid) {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
+        justCreated = true;
       }
 
       // ── Optimistic Update ──────────────────────────────────────────────────
@@ -1697,16 +1717,23 @@ export default function Chat() {
       });
 
       // Deterministically wait for the socket to be OPEN — no timeout guesses.
-      // If the existing socket is not open, close it first (prevents orphaned sockets).
-      let ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (ws && ws.readyState !== WebSocket.CLOSED) {
-          ws.close();
+      // When a session was just created, the useEffect will create the WebSocket
+      // in response to the currentSessionId state update. Poll wsRef instead of
+      // creating a second socket (which races with the effect and gets closed).
+      let openWs: WebSocket;
+      if (justCreated) {
+        openWs = await waitForSocketRef(wsRef);
+      } else {
+        let ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          if (ws && ws.readyState !== WebSocket.CLOSED) {
+            ws.close();
+          }
+          ws = connectWebSocket();
+          wsRef.current = ws;
         }
-        ws = connectWebSocket();
-        wsRef.current = ws;
+        openWs = await waitForSocket(ws);
       }
-      const openWs = await waitForSocket(ws);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
     } catch (e: any) {
       console.error('[sendMessage] Failed:', e);
@@ -1787,9 +1814,11 @@ export default function Chat() {
 
     try {
       let sid = currentSessionId;
+      let justCreated = false;
       if (!sid) {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
+        justCreated = true;
       }
 
       // ── Optimistic Update ──────────────────────────────────────────────────
@@ -1803,16 +1832,20 @@ export default function Chat() {
       });
 
       // Deterministically wait for the socket to be OPEN — no timeout guesses.
-      // If the existing socket is not open, close it first (prevents orphaned sockets).
-      let ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (ws && ws.readyState !== WebSocket.CLOSED) {
-          ws.close();
+      let openWs: WebSocket;
+      if (justCreated) {
+        openWs = await waitForSocketRef(wsRef);
+      } else {
+        let ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          if (ws && ws.readyState !== WebSocket.CLOSED) {
+            ws.close();
+          }
+          ws = connectWebSocket();
+          wsRef.current = ws;
         }
-        ws = connectWebSocket();
-        wsRef.current = ws;
+        openWs = await waitForSocket(ws);
       }
-      const openWs = await waitForSocket(ws);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
     } catch (e: any) {
       console.error('[sendQuickAction] Failed:', e);
@@ -2103,10 +2136,18 @@ export default function Chat() {
 
                   // Denied — show collapsed DeniedCollapsible (no interactive card)
                   if (status === 'denied') {
+                    // Extract denial reason from the matching tool message
+                    const matchingToolMsg = msg.toolCallId
+                      ? displayMessages.find((m: Message) => m.role === 'tool' && m.toolCallId === msg.toolCallId)
+                      : undefined;
+                    const denyReason = matchingToolMsg?.content
+                      ?.replace(/^Tool call denied:\s*/i, '')
+                      ?.replace(/^The user DENIED.*?\.\s*/i, '')
+                      ?.trim() || '';
                     return (
                       <div key={msg.id} className="w-full text-center my-6">
                         <div className="inline-block w-full max-w-md text-left">
-                          <DeniedCollapsible reason="" />
+                          <DeniedCollapsible reason={denyReason} />
                         </div>
                       </div>
                     );
