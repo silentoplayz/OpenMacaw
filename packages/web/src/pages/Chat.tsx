@@ -1698,11 +1698,9 @@ export default function Chat() {
     try {
       // Auto-create a session if none exists
       let sid = currentSessionId;
-      let justCreated = false;
       if (!sid) {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
-        justCreated = true;
       }
 
       // ── Optimistic Update ──────────────────────────────────────────────────
@@ -1716,28 +1714,17 @@ export default function Chat() {
         };
       });
 
-      // Wait for a usable WebSocket. Never close a CONNECTING socket — that
-      // causes state=2 (CLOSING) races. Only create a new one when the current
-      // socket is dead (CLOSED/CLOSING) or absent. If the useEffect hasn't
-      // created one yet (e.g. just-created session), poll wsRef until it appears.
-      let ws = wsRef.current;
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-        if (justCreated) {
-          // useEffect will create the socket once React processes the state update.
-          const readyWs = await waitForSocketRef(wsRef);
-          readyWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
-          return;
-        }
-        ws = connectWebSocket();
-        wsRef.current = ws;
-      }
-      const openWs = await waitForSocket(ws);
+      // Always poll wsRef.current rather than a specific socket instance.
+      // The useEffect lifecycle (or React strict mode) can close the current
+      // socket and replace it with a new one at any time. Polling the ref
+      // ensures we pick up whichever socket is alive and OPEN.
+      const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
     } catch (e: any) {
       console.error('[sendMessage] Failed:', e);
       dispatch({ type: 'SET_ERROR', message: e.message || 'Failed to send message' });
     }
-  }, [input, isStreaming, currentSessionId, queryClient, connectWebSocket]);
+  }, [input, isStreaming, currentSessionId, queryClient]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1776,12 +1763,7 @@ export default function Chat() {
       dispatch({ type: 'START_STREAM' });
       streamStartRef.current = Date.now();
 
-      let ws = wsRef.current;
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-        ws = connectWebSocket();
-        wsRef.current = ws;
-      }
-      const openWs = await waitForSocket(ws);
+      const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({
         type: 'regenerate',
         sessionId: currentSessionId
@@ -1812,11 +1794,9 @@ export default function Chat() {
 
     try {
       let sid = currentSessionId;
-      let justCreated = false;
       if (!sid) {
         const newSession = await createSessionMutation.mutateAsync();
         sid = newSession.id;
-        justCreated = true;
       }
 
       // ── Optimistic Update ──────────────────────────────────────────────────
@@ -1829,18 +1809,7 @@ export default function Chat() {
         };
       });
 
-      // Wait for a usable WebSocket — same logic as handleSend.
-      let ws = wsRef.current;
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-        if (justCreated) {
-          const readyWs = await waitForSocketRef(wsRef);
-          readyWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
-          return;
-        }
-        ws = connectWebSocket();
-        wsRef.current = ws;
-      }
-      const openWs = await waitForSocket(ws);
+      const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
     } catch (e: any) {
       console.error('[sendQuickAction] Failed:', e);
