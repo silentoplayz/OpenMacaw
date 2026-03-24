@@ -171,9 +171,22 @@ export class DiscordPipeline {
    * Returns the number of sessions deleted.
    */
   clearAllSessions(): number {
+    // The in-memory map may be incomplete (e.g. after a server restart the map
+    // is empty even though sessions still exist in the DB).  Query the DB for
+    // all sessions whose title matches this pipeline's naming convention and
+    // delete them, then clear the in-memory map.
+    const db = getDb();
+    const prefix = `${this.record.name} \u2014 `;  // em-dash used in resolveSessionForContext
+    const rows = db
+      .select(schema.sessions as any)
+      .where((col: (k: string) => unknown) =>
+        typeof col('title') === 'string' && (col('title') as string).startsWith(prefix),
+      )
+      .all() as Array<{ id: string }>;
+
     let count = 0;
-    for (const [, sessionId] of this.contextSessions) {
-      try { deleteSession(sessionId); count++; } catch { /* already gone */ }
+    for (const row of rows) {
+      try { deleteSession(row.id); count++; } catch { /* already gone */ }
     }
     this.contextSessions.clear();
     return count;
