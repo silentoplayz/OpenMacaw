@@ -10,6 +10,7 @@ import {
   stopPipelineAsync,
   restartPipelineAsync,
   getLinePipeline,
+  getDiscordPipeline,
   isRunning,
 } from '../pipelines/index.js';
 
@@ -20,6 +21,7 @@ const pipelineTypeSchema = z.enum(['discord', 'telegram', 'line']);
 const discordConfigSchema = z.object({
   botToken: z.string().min(1),
   channelId: z.string().optional(),
+  mentionOnly: z.boolean().optional(),
 });
 
 const telegramConfigSchema = z.object({
@@ -141,6 +143,25 @@ export async function pipelinesRoutes(fastify: FastifyInstance): Promise<void> {
         const message = err instanceof Error ? err.message : String(err);
         return reply.code(500).send({ error: message });
       }
+    }
+  );
+
+  // POST /api/pipelines/:id/clear-sessions
+  fastify.post(
+    '/api/pipelines/:id/clear-sessions',
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      const { id } = request.params;
+      const pipeline = getPipeline(id);
+      if (!pipeline) return reply.code(404).send({ error: 'Pipeline not found' });
+      if (pipeline.type !== 'discord') {
+        return reply.code(400).send({ error: 'Only Discord pipelines support session clearing' });
+      }
+      const adapter = getDiscordPipeline(id);
+      if (!adapter) {
+        return reply.code(400).send({ error: 'Pipeline is not running' });
+      }
+      const deleted = adapter.clearAllSessions();
+      return reply.send({ success: true, deleted });
     }
   );
 

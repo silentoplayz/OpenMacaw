@@ -72,7 +72,7 @@ const STATUS_DOT: Record<PipelineStatus, string> = {
 // ── Empty config defaults ─────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: Record<PipelineType, Record<string, string>> = {
-  discord: { botToken: '', channelId: '' },
+  discord: { botToken: '', channelId: '', mentionOnly: 'true' },
   telegram: { botToken: '', allowedChatIds: '' },
   line: { channelAccessToken: '', channelSecret: '' },
 };
@@ -85,12 +85,14 @@ type FieldMeta = {
   placeholder: string;
   secret?: boolean;
   hint?: string;
+  toggle?: boolean;
 };
 
 const CONFIG_FIELDS: Record<PipelineType, FieldMeta[]> = {
   discord: [
     { key: 'botToken', label: 'Bot Token', placeholder: 'MTxxxxxxxxxx...', secret: true, hint: 'From the Discord Developer Portal → Bot → Token' },
     { key: 'channelId', label: 'Channel ID (optional)', placeholder: '123456789012345678', hint: 'Only respond in this channel. Leave blank to respond everywhere.' },
+    { key: 'mentionOnly', label: 'Mention Only', placeholder: '', hint: 'When enabled, the bot only responds to messages that @mention it. Slash commands always work.', toggle: true },
   ],
   telegram: [
     { key: 'botToken', label: 'Bot Token', placeholder: '123456:ABCdef...', secret: true, hint: 'From @BotFather on Telegram' },
@@ -109,6 +111,7 @@ function buildConfig(type: PipelineType, raw: Record<string, string>): Record<st
     return {
       botToken: raw.botToken,
       ...(raw.channelId ? { channelId: raw.channelId } : {}),
+      mentionOnly: raw.mentionOnly !== 'false',
     };
   }
   if (type === 'telegram') {
@@ -123,7 +126,11 @@ function buildConfig(type: PipelineType, raw: Record<string, string>): Record<st
 
 function configToRaw(type: PipelineType, config: Record<string, unknown>): Record<string, string> {
   if (type === 'discord') {
-    return { botToken: String(config.botToken ?? ''), channelId: String(config.channelId ?? '') };
+    return {
+      botToken: String(config.botToken ?? ''),
+      channelId: String(config.channelId ?? ''),
+      mentionOnly: config.mentionOnly !== false ? 'true' : 'false',
+    };
   }
   if (type === 'telegram') {
     const ids = Array.isArray(config.allowedChatIds) ? config.allowedChatIds.join(', ') : '';
@@ -160,7 +167,7 @@ function AddPipelineModal({
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError('Name is required'); return; }
-    if (!sessionId) { setError('Select a session'); return; }
+    if (type !== 'discord' && !sessionId) { setError('Select a session'); return; }
     setSaving(true);
     setError('');
     try {
@@ -170,7 +177,7 @@ function AddPipelineModal({
         body: JSON.stringify({
           name: name.trim(),
           type,
-          sessionId,
+          ...(type !== 'discord' ? { sessionId } : {}),
           config: buildConfig(type, rawConfig),
         }),
       });
@@ -242,36 +249,52 @@ function AddPipelineModal({
             <p className="text-[10px] text-gray-500 mt-2 italic leading-relaxed">{TYPE_META[type].description}</p>
           </div>
 
-          {/* Session */}
-          <div>
-            <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
-            <select
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            >
-              {sessions.length === 0 && (
-                <option value="">No sessions available — create one in Chat first</option>
-              )}
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
-              ))}
-            </select>
-          </div>
+          {/* Session — hidden for Discord (sessions are auto-isolated per server/DM) */}
+          {type !== 'discord' && (
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
+              <select
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {sessions.length === 0 && (
+                  <option value="">No sessions available — create one in Chat first</option>
+                )}
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Config fields */}
           <div className="space-y-3">
             <p className="text-xs font-mono text-gray-400">Configuration</p>
             {CONFIG_FIELDS[type].map((field) => (
               <div key={field.key}>
-                <label className="block text-xs font-mono text-gray-500 mb-1">{field.label}</label>
-                <input
-                  type={field.secret ? 'password' : 'text'}
-                  value={rawConfig[field.key] ?? ''}
-                  onChange={(e) => setRawConfig({ ...rawConfig, [field.key]: e.target.value })}
-                  placeholder={field.placeholder}
-                  className="w-full px-3 py-2 bg-black border border-white/5 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-                />
+                {field.toggle ? (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rawConfig[field.key] !== 'false'}
+                      onChange={(e) => setRawConfig({ ...rawConfig, [field.key]: e.target.checked ? 'true' : 'false' })}
+                      className="accent-cyan-500"
+                    />
+                    <span className="text-xs font-mono text-gray-400">{field.label}</span>
+                  </label>
+                ) : (
+                  <>
+                    <label className="block text-xs font-mono text-gray-500 mb-1">{field.label}</label>
+                    <input
+                      type={field.secret ? 'password' : 'text'}
+                      value={rawConfig[field.key] ?? ''}
+                      onChange={(e) => setRawConfig({ ...rawConfig, [field.key]: e.target.value })}
+                      placeholder={field.placeholder}
+                      className="w-full px-3 py-2 bg-black border border-white/5 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                    />
+                  </>
+                )}
                 {field.hint && (
                   <p className="text-[10px] text-gray-600 mt-0.5">{field.hint}</p>
                 )}
@@ -351,12 +374,25 @@ function PipelineRow({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sessionId: editSessionId,
+        ...(pipeline.type !== 'discord' ? { sessionId: editSessionId } : {}),
         config: buildConfig(pipeline.type, editRaw),
       }),
     });
     setSaving(false);
     onMutated();
+  };
+
+  const [clearing, setClearing] = useState(false);
+
+  const handleClearSessions = async () => {
+    if (!window.confirm('Clear all Discord sessions for this pipeline? New sessions will use the current global personality.')) return;
+    setClearing(true);
+    try {
+      const res = await apiFetch(`/api/pipelines/${pipeline.id}/clear-sessions`, { method: 'POST' });
+      const data = await res.json();
+      window.alert(`Cleared ${data.deleted ?? 0} session(s).`);
+    } catch { /* ignore */ }
+    setClearing(false);
   };
 
   const handleCopyWebhook = async () => {
@@ -365,7 +401,9 @@ function PipelineRow({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const sessionTitle = sessions.find((s) => s.id === pipeline.sessionId)?.title ?? pipeline.sessionId ?? '—';
+  const sessionTitle = pipeline.type === 'discord'
+    ? 'Auto-isolated per server/DM'
+    : (sessions.find((s) => s.id === pipeline.sessionId)?.title ?? pipeline.sessionId ?? '—');
 
   return (
     <div className="border border-white/5 rounded-lg bg-zinc-950/30 overflow-hidden backdrop-blur-sm transition-all hover:bg-zinc-900/50 hover:border-white/10 group">
@@ -443,31 +481,58 @@ function PipelineRow({
       {/* Expanded config editor */}
       {expanded && (
         <div className="border-t border-white/5 px-4 py-4 space-y-3 bg-black/40">
-          {/* Session picker */}
-          <div>
-            <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
-            <select
-              value={editSessionId}
-              onChange={(e) => setEditSessionId(e.target.value)}
-              className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            >
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
-              ))}
-            </select>
-          </div>
+          {/* Session picker — hidden for Discord (sessions are auto-isolated per server/DM) */}
+          {pipeline.type === 'discord' ? (
+            <div className="flex items-start gap-3 px-4 py-3 bg-indigo-950/20 border border-indigo-500/20 rounded-lg text-xs text-indigo-300">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Discord sessions are automatically isolated per server and per DM.
+                Each server and each DM conversation has its own independent session.
+              </span>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-mono text-gray-400 mb-1">Shared Session</label>
+              <select
+                value={editSessionId}
+                onChange={(e) => setEditSessionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title} ({s.model})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Config fields */}
           {CONFIG_FIELDS[pipeline.type].map((field) => (
             <div key={field.key}>
-              <label className="block text-xs font-mono text-gray-500 mb-1">{field.label}</label>
-              <input
-                type={field.secret ? 'password' : 'text'}
-                value={editRaw[field.key] ?? ''}
-                onChange={(e) => setEditRaw({ ...editRaw, [field.key]: e.target.value })}
-                placeholder={field.placeholder}
-                className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500"
-              />
+              {field.toggle ? (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editRaw[field.key] !== 'false'}
+                    onChange={(e) => setEditRaw({ ...editRaw, [field.key]: e.target.checked ? 'true' : 'false' })}
+                    className="accent-cyan-500"
+                  />
+                  <span className="text-xs font-mono text-gray-400">{field.label}</span>
+                </label>
+              ) : (
+                <>
+                  <label className="block text-xs font-mono text-gray-500 mb-1">{field.label}</label>
+                  <input
+                    type={field.secret ? 'password' : 'text'}
+                    value={editRaw[field.key] ?? ''}
+                    onChange={(e) => setEditRaw({ ...editRaw, [field.key]: e.target.value })}
+                    placeholder={field.placeholder}
+                    className="w-full px-3 py-2 bg-black border border-white/10 rounded-md text-sm text-gray-200 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                </>
+              )}
+              {field.hint && (
+                <p className="text-[10px] text-gray-600 mt-0.5">{field.hint}</p>
+              )}
             </div>
           ))}
 
@@ -492,7 +557,17 @@ function PipelineRow({
             </div>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {pipeline.type === 'discord' && pipeline.running && (
+              <button
+                onClick={handleClearSessions}
+                disabled={clearing}
+                className="flex items-center gap-2 px-4 py-2 bg-red-950/30 border border-red-500/50 hover:bg-red-900/40 text-red-400 hover:text-red-300 text-xs font-mono font-bold uppercase tracking-wider rounded transition-all disabled:opacity-50"
+              >
+                {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Clear Sessions
+              </button>
+            )}
             <button
               onClick={handleSave}
               disabled={saving}
@@ -570,7 +645,7 @@ export default function Pipelines() {
             <Workflow className="w-10 h-10 text-gray-700 mb-4" />
             <p className="text-sm font-mono text-gray-400 mb-1">No pipelines configured</p>
             <p className="text-xs text-gray-600 mb-6 max-w-sm">
-              Pipelines let external services — Discord, Telegram, LINE — talk to your agent through a shared session.
+              Pipelines let external services — Discord, Telegram, LINE — talk to your agent.
             </p>
             <button
               onClick={() => setShowModal(true)}

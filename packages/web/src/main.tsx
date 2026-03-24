@@ -11,6 +11,7 @@ import Settings from './pages/Settings';
 import Pipelines from './pages/Pipelines';
 import Catalog from './pages/Catalog';
 import Admin from './pages/Admin';
+import Skills from './pages/Skills';
 import Forbidden from './pages/Forbidden';
 import Auth from './pages/Auth';
 import Pending from './pages/Pending';
@@ -70,6 +71,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="pipelines" element={<Pipelines />} />
             <Route path="activity" element={<AuditLog />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="skills" element={<Skills />} />
             <Route path="catalog" element={<Catalog />} />
             <Route path="forbidden" element={<Forbidden />} />
             <Route path="admin" element={<AdminRoute><Admin /></AdminRoute>} />

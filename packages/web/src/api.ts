@@ -22,7 +22,7 @@ export type AgentEvent =
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   // Ensure endpoint starts with a slash
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  
+
   const headers = new Headers(options.headers || {});
   const token = localStorage.getItem('openmacaw_token');
   if (token) {
@@ -30,7 +30,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   }
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  
+
   if (!path.startsWith('/api/auth/') && res.status === 401) {
     localStorage.removeItem('openmacaw_token');
     window.location.href = '/auth';
@@ -41,11 +41,23 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
 
 export function getWsUrl(endpoint: string) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  let base: string;
   if (import.meta.env.VITE_API_URL) {
     const url = new URL(import.meta.env.VITE_API_URL);
-    return `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    base = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}${path}`;
+  } else {
+    base = `${protocol}//${window.location.host}${path}`;
   }
 
-  return `${protocol}//${window.location.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  // Browsers cannot set Authorization headers on WebSocket connections, so
+  // pass the JWT as a query parameter for the server to verify.
+  const token = localStorage.getItem('openmacaw_token');
+  if (token) {
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}token=${encodeURIComponent(token)}`;
+  }
+
+  return base;
 }

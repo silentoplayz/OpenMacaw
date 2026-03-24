@@ -12,3 +12,4 @@ export { modelCheckRoutes } from './model-check.js';
 export { agenticRoutes } from './agentic.js';
 export { authRoutes } from './auth.js';
 export { adminRoutes } from './admin.js';
+export { skillsRoutes } from './skills.js';

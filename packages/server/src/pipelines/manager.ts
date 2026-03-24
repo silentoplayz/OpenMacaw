@@ -131,13 +131,15 @@ export async function startPipelineAsync(id: string): Promise<void> {
     return;
   }
 
-  // Auto-provision a dedicated session for this pipeline if one doesn't exist yet.
-  // This means pipelines are fully self-contained — no manual session linking required.
-  if (!record.sessionId || !getSession(record.sessionId)) {
-    const session = createSession({ title: `${record.name} Conversation` });
-    updatePipeline(id, { sessionId: session.id });
-    record = getPipeline(id)!;
-    console.log(`[PipelineManager] Auto-created session ${session.id} for pipeline "${record.name}"`);
+  // Auto-provision a dedicated session for non-Discord pipelines if one doesn't
+  // exist yet.  Discord pipelines manage their own per-context sessions internally.
+  if (record.type !== 'discord') {
+    if (!record.sessionId || !getSession(record.sessionId)) {
+      const session = createSession({ title: `${record.name} Conversation` });
+      updatePipeline(id, { sessionId: session.id });
+      record = getPipeline(id)!;
+      console.log(`[PipelineManager] Auto-created session ${session.id} for pipeline "${record.name}"`);
+    }
   }
 
   const adapter = createAdapter(record);
@@ -185,6 +187,13 @@ export async function restorePipelinesAsync(): Promise<void> {
 export function getLinePipeline(id: string): LinePipeline | null {
   const adapter = runningAdapters.get(id);
   if (adapter instanceof LinePipeline) return adapter;
+  return null;
+}
+
+/** Retrieve a running Discord adapter by pipeline ID. */
+export function getDiscordPipeline(id: string): DiscordPipeline | null {
+  const adapter = runningAdapters.get(id);
+  if (adapter instanceof DiscordPipeline) return adapter;
   return null;
 }
 

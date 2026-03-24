@@ -6,7 +6,7 @@ import {
   MessageSquare, Server, Activity, Settings, Bird,
   ChevronLeft, ChevronRight, Bot, Plus, X, Save, Loader2, Menu, Moon, Sun, PenSquare,
   ShieldCheck, Settings2, AlertOctagon, Copy, ChevronDown, ChevronUp, Cpu, Clock, Hash, Workflow, BookMarked, Trash2, LogOut, User as UserIcon, ShieldAlert, CheckCircle2, Circle, Crosshair, Target,
-  MoreHorizontal, Pin, Download, Edit2, FolderClosed, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen
+  MoreHorizontal, Pin, Download, Edit2, FolderClosed, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Zap
 } from 'lucide-react';
 import { apiFetch } from './api';
 import { ServerPermissionDrawer } from './components/ServerPermissionDrawer';
@@ -504,6 +504,7 @@ function App() {
   const navItems = [
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/servers', label: 'Servers', icon: Server },
+    { path: '/skills', label: 'Skills', icon: Zap },
     { path: '/catalog', label: 'Catalog', icon: BookMarked },
     { path: '/activity', label: 'Audit Log', icon: Activity },
     { path: '/pipelines', label: 'Pipelines', icon: Workflow },
@@ -623,7 +624,7 @@ function App() {
       <AgentPanel isOpen={isAgentPanelOpen} onClose={() => setIsAgentPanelOpen(false)} isCollapsed={false} />
 
       {/* ── Mobile top bar (hamburger + logo) — hidden on lg+ ── */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 h-12 bg-zinc-950 border-b border-white/5 flex items-center px-3 gap-3 z-30">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-12 bg-zinc-950 border-b border-white/5 flex items-center px-3 gap-3 z-30">
         <button
           onClick={() => setMobileNavOpen(v => !v)}
           className="p-1.5 rounded-md text-gray-400 hover:bg-white/10 hover:text-white transition-colors"
@@ -638,7 +639,7 @@ function App() {
       {/* ── Mobile backdrop ── */}
       {mobileNavOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-black/60 z-30 backdrop-blur-sm"
+          className="md:hidden fixed inset-0 bg-black/60 z-30 backdrop-blur-sm"
           onClick={() => setMobileNavOpen(false)}
         />
       )}
@@ -653,8 +654,8 @@ function App() {
           'fixed inset-y-0 left-0 shadow-2xl w-56',
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
           // Desktop: in flex flow
-          'lg:relative lg:translate-x-0 lg:shadow-none',
-          isSidebarOpen ? 'lg:w-64 opacity-100' : 'lg:w-16 opacity-100'
+          'md:relative md:translate-x-0 md:shadow-none',
+          isSidebarOpen ? 'md:w-64 opacity-100' : 'md:w-16 opacity-100'
         ].join(' ')}>
 
           {/* Logo & Toggle - Morphing Header */}
@@ -666,7 +667,7 @@ function App() {
               </div>
               <button
                 onClick={toggleSidebar}
-                className="hidden lg:flex p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+                className="hidden md:flex p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
                 title="Close Sidebar"
               >
                 <PanelLeftClose className="w-4 h-4" />
@@ -699,7 +700,7 @@ function App() {
               className={`flex items-center rounded-lg text-sm font-medium bg-white/5 border border-white/5 text-gray-300 hover:bg-cyan-950/40 hover:border-cyan-500/20 hover:text-cyan-300 transition-all ${isSidebarOpen ? 'w-full gap-2 px-3 py-2' : 'p-2'}`}
             >
               <PenSquare className="w-4 h-4 shrink-0" />
-              <span className={`whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden lg:inline-block'}`}>New Chat</span>
+              <span className={`whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden md:inline-block'}`}>New Chat</span>
             </button>
           </div>
 
@@ -718,7 +719,7 @@ function App() {
                     className={`flex items-center rounded-md text-sm transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'} ${isSidebarOpen ? 'gap-2 px-2 py-1.5' : 'p-2 justify-center'}`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    <span className={`font-medium whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden lg:inline-block'}`}>{item.label}</span>
+                    <span className={`font-medium whitespace-nowrap ${!isSidebarOpen ? 'hidden' : 'hidden md:inline-block'}`}>{item.label}</span>
                   </Link>
 
                   {/* Chat sessions submenu — grouped workspaces */}
@@ -909,7 +910,7 @@ function App() {
                   }`}
               >
                 <AlertOctagon className="w-4 h-4 shrink-0" />
-                <span className={`transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden lg:block lg:opacity-0 lg:w-0 lg:overflow-hidden'}`}>
+                <span className={`transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden md:block md:opacity-0 md:w-0 md:overflow-hidden'}`}>
                   {haltMutation.isPending ? 'Halting...' : 'Halt All'}
                 </span>
               </button>
@@ -924,7 +925,7 @@ function App() {
                   ${isSidebarOpen ? 'w-full gap-2 px-2 py-1.5' : 'p-2'}`}
               >
                 <Bot className="w-4 h-4 shrink-0" />
-                <span className={`font-medium transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden lg:block lg:opacity-0 lg:w-0 lg:overflow-hidden'}`}>
+                <span className={`font-medium transition-opacity duration-300 whitespace-nowrap ${!isSidebarOpen && 'hidden md:block md:opacity-0 md:w-0 md:overflow-hidden'}`}>
                   Configure Agent
                 </span>
               </button>
@@ -942,14 +943,14 @@ function App() {
         </aside>
 
         {/* ── Middle Pane ── */}
-        <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 lg:pt-0 delay-150 duration-300 transition-all">
+        <main className="flex-1 flex flex-col min-w-0 bg-black z-0 relative pt-12 md:pt-0 delay-150 duration-300 transition-all">
           <Outlet />
 
           {/* Open Inspector Button (Desktop only, when closed, on Chat routes) */}
           {!isInspectorOpen && isChatRoute && (
             <button
               onClick={toggleInspector}
-              className="hidden lg:flex fixed top-3 right-4 z-20 p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors border border-white/5 bg-black/50 backdrop-blur-sm shadow-lg"
+              className="hidden md:flex fixed top-3 right-4 z-20 p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors border border-white/5 bg-black/50 backdrop-blur-sm shadow-lg"
               title="Open Inspector"
             >
               <PanelRightOpen className="w-4 h-4" />
@@ -965,7 +966,7 @@ function App() {
               animate={{ width: 320, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.3, ease: 'easeInOut' }}
-              className="hidden lg:flex flex-col bg-zinc-950 border-l border-white/5 shrink-0 z-10 overflow-hidden"
+              className="hidden md:flex flex-col bg-zinc-950 border-l border-white/5 shrink-0 z-10 overflow-hidden"
             >
               {/* Inspector Header */}
               <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-black shrink-0">
@@ -1028,7 +1029,7 @@ function App() {
               {/* Middle Section: Pipeline Roadmap OR Live Event Stream */}
               <div
                 ref={inspectorRef}
-                className="flex-1 overflow-y-auto selection:bg-cyan-900/40 w-80"
+                className="flex-1 overflow-y-auto selection:bg-cyan-900/40 w-full"
               >
                 <AnimatePresence mode="wait">
                   {pipelineState ? (
@@ -1234,7 +1235,7 @@ function App() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="p-3 font-mono text-[11px] text-gray-500 space-y-1.5 w-80"
+                      className="p-3 font-mono text-[11px] text-gray-500 space-y-1.5 w-full"
                     >
                       {executionLogs.length === 0 && inspectorEntries.length === 0 ? (
                         <>

@@ -1,4 +1,4 @@
-import type { LLMProvider, ProviderType, Message, ToolDefinition, StreamDelta, ToolCall } from './provider.js';
+import type { LLMProvider, ChatOptions, ProviderType, Message, ToolDefinition, StreamDelta, ToolCall } from './provider.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
 import { OllamaProvider } from './ollama.js';
@@ -87,4 +87,4 @@ export function getProviderForModel(modelName: string): LLMProvider {
   return getProvider();
 }
 
-export { type LLMProvider, type Message, type ToolDefinition, type StreamDelta, type ToolCall };
+export { type LLMProvider, type ChatOptions, type Message, type ToolDefinition, type StreamDelta, type ToolCall };

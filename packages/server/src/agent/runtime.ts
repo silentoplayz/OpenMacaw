@@ -1,5 +1,5 @@
 import { getProviderForModel, type Message, type StreamDelta, type ToolCall } from '../llm/index.js';
-import { buildSystemPrompt } from './prompts.js';
+import { buildSystemPrompt, type ActiveSkill } from './prompts.js';
 import { looksLikeHallucinatedAction } from '../llm/ollama.js';
 import { getAllTools, findServerIdForTool, getMCPServer, getToolDefinition } from '../mcp/registry.js';
 import { evaluatePermission, extractServerIdFromToolName } from '../permissions/index.js';
@@ -8,7 +8,7 @@ import { validateToolCallArgs } from '../mcp/toolSanitizer.js';
 import { getConfig } from '../config.js';
 import { getDrizzleDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, or, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { getSession, updateSession } from './session.js';
 
@@ -22,6 +22,12 @@ export interface AgentConfig {
    * system prompt via `buildSystemPrompt()` — never replaces it.
    */
   personality?: string;
+  /** Custom agent name from workspace settings. Overrides the default "OpenMacaw" identity. */
+  agentName?: string;
+  /** Custom agent description from workspace settings. */
+  agentDescription?: string;
+  /** LLM sampling temperature. */
+  temperature?: number;
   mode: AgentMode;
   maxSteps: number;
   /**
@@ -102,14 +108,76 @@ export class AgentRuntime {
     this.messages = [];
   }
 
+  /**
+   * Load active skills for the current session's user. Skills are loaded from:
+   * 1. Per-session activated skills (stored in sessions.active_skill_ids JSON)
+   * 2. Global enabled skills
+   * 3. User's personal enabled skills
+   * If the session has explicit skill IDs set, only those are used. Otherwise,
+   * all enabled skills visible to the user are loaded.
+   */
+  private async loadActiveSkills(): Promise<ActiveSkill[]> {
+    const db = getDrizzleDb();
+
+    // Get the session to find the userId and active skill IDs
+    const sessionRows = await db.select().from(schema.sessions)
+      .where(eq(schema.sessions.id, this.config.sessionId));
+    if (sessionRows.length === 0) return [];
+
+    const session = sessionRows[0];
+    const userId = session.userId;
+
+    // Parse per-session skill activation list
+    let activeIds: string[] = [];
+    try {
+      activeIds = JSON.parse(session.activeSkillIds || '[]');
+    } catch { /* invalid JSON, ignore */ }
+
+    let skills: typeof schema.skills.$inferSelect[];
+
+    if (activeIds.length > 0) {
+      // Load only the explicitly activated skills for this session
+      const allSkills = await db.select().from(schema.skills)
+        .where(eq(schema.skills.enabled, 1));
+      skills = allSkills.filter(s => activeIds.includes(s.id));
+    } else {
+      // No per-session filter: load all enabled skills visible to this user
+      skills = await db.select().from(schema.skills)
+        .where(
+          and(
+            eq(schema.skills.enabled, 1),
+            or(
+              eq(schema.skills.userId, userId),
+              eq(schema.skills.isGlobal, 1)
+            )
+          )
+        );
+    }
+
+    return skills.map(s => ({
+      name: s.name,
+      instructions: s.instructions,
+      toolHints: (() => { try { return JSON.parse(s.toolHints || '[]'); } catch { return []; } })(),
+    }));
+  }
+
   private async loadHistory(): Promise<void> {
     const db = getDrizzleDb();
     const history = await db.select().from(schema.messages)
       .where(eq(schema.messages.sessionId, this.config.sessionId))
       .orderBy(asc(schema.messages.createdAt));
 
+    // Load active skills for system prompt injection
+    const activeSkills = await this.loadActiveSkills();
+
+    const identity = {
+      agentName: this.config.agentName,
+      agentDescription: this.config.agentDescription,
+      personality: this.config.personality,
+    };
+
     if (history.length === 0) {
-      this.messages = [{ role: 'system', content: buildSystemPrompt(this.config.personality) }];
+      this.messages = [{ role: 'system', content: buildSystemPrompt(identity, activeSkills) }];
       return;
     }
 
@@ -143,7 +211,7 @@ export class AgentRuntime {
 
     // Ensure system prompt is at the top (always present — even with no personality).
     if (this.messages.length === 0 || this.messages[0].role !== 'system') {
-      this.messages.unshift({ role: 'system', content: buildSystemPrompt(this.config.personality) });
+      this.messages.unshift({ role: 'system', content: buildSystemPrompt(identity, activeSkills) });
     } else {
       // Set lastMessageId from the last message of the loaded history
       const lastMsg = activeHistory[activeHistory.length - 1];
@@ -223,7 +291,7 @@ export class AgentRuntime {
               this.eventHandler({ type: 'error', message: delta.error || 'Unknown error' });
             }
           },
-          abortController.signal
+          { signal: abortController.signal, temperature: this.config.temperature }
         );
       } catch (e: any) {
         if (e.name === 'AbortError') {
@@ -245,7 +313,7 @@ export class AgentRuntime {
 
       // Stop loop if we intercepted a tool proposal (Human-in-the-Loop breakpoint)
       if (interceptedProposal) {
-        console.log('[Agent] Execution halted for human approval (proposal intercepted).');
+        console.log(`[Agent] [session:${this.config.sessionId}] Execution halted for human approval (proposal intercepted).`);
         break;
       }
 
@@ -327,7 +395,7 @@ export class AgentRuntime {
 
       if (this.toolCallTimestamps.length > this.RATE_LIMIT_MAX_CALLS) {
         console.error(
-          `[Agent] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
+          `[Agent] [session:${this.config.sessionId}] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
         );
         this.eventHandler({
           type: 'error',
@@ -338,7 +406,7 @@ export class AgentRuntime {
     }
 
     let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
-    console.log('[Agent] Tool call (raw):', toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
+    console.log(`[Agent] [session:${this.config.sessionId}] Tool call (raw):`, toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
 
     // ── Task 1: Tool-to-Server Lookup ─────────────────────────────────────
     // If the LLM output a bare tool name (no server prefix), resolve it via
@@ -365,7 +433,7 @@ export class AgentRuntime {
     this.stepCount++;
     this.eventHandler({ type: 'step_count', count: this.stepCount });
 
-    console.log('[Agent] Tool call start:', toolName, 'input:', JSON.stringify(toolCall.input).substring(0, 100));
+    console.log(`[Agent] [session:${this.config.sessionId}] Tool call start:`, toolName, 'input:', JSON.stringify(toolCall.input).substring(0, 100));
     this.eventHandler({
       type: 'tool_call_start',
       tool: toolName,
@@ -381,7 +449,7 @@ export class AgentRuntime {
 
     // ── Three-verdict routing ─────────────────────────────────────────────────
     if (permResult.verdict === 'DENY') {
-      console.log('[Agent] DENIED by permission guard:', permResult.reason);
+      console.log(`[Agent] [session:${this.config.sessionId}] DENIED by permission guard:`, permResult.reason);
       this.eventHandler({
         type: 'tool_call_result',
         outcome: 'denied',
@@ -422,7 +490,7 @@ export class AgentRuntime {
 
     // ── ALLOW_SILENT: trusted zone — run immediately, no human pause ──────────
     if (permResult.verdict === 'ALLOW_SILENT') {
-      console.log('[Agent] ALLOW_SILENT: Trusted zone hit for', toolName);
+      console.log(`[Agent] [session:${this.config.sessionId}] ALLOW_SILENT: Trusted zone hit for`, toolName);
       return await this.executeToolDirectly(toolCall, serverId, toolName, precedingText, true);
     }
 
@@ -572,7 +640,7 @@ export class AgentRuntime {
       }
       const safeResultStr = secretScan.found ? secretScan.redacted : resultStr;
 
-      console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
+      console.log(`[Agent] [session:${this.config.sessionId}] Auto-execute OK:`, toolName, 'latency:', latency, 'ms');
       this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
       await this.logActivity(serverId, toolName, toolCall.input, silent ? 'auto_approved' : 'allowed', undefined, latency);
 
@@ -614,7 +682,7 @@ export class AgentRuntime {
     parentId?: string | null,
     isActive = 1
   ): Promise<string> {
-    console.log('[Agent] Saving message:', role, 'content length:', content.length);
+    console.log(`[Agent] [session:${this.config.sessionId}] Saving message:`, role, 'content length:', content.length);
     const db = getDrizzleDb();
     const messageId = nanoid();
     const pid = parentId === undefined ? this.lastMessageId : parentId;
@@ -635,7 +703,7 @@ export class AgentRuntime {
         outputTokens: usage?.outputTokens,
         createdAt: new Date(),
       });
-      console.log(`[Agent] Message saved: ${messageId} (parent: ${pid})`);
+      console.log(`[Agent] [session:${this.config.sessionId}] Message saved: ${messageId} (parent: ${pid})`);
       this.lastMessageId = messageId;
       return messageId;
     } catch (e) {

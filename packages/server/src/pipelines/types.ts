@@ -8,6 +8,8 @@ export type DiscordConfig = {
   botToken: string;
   /** If set, only respond in this specific channel */
   channelId?: string;
+  /** When true (default), only respond to messages that @mention the bot */
+  mentionOnly?: boolean;
 };
 
 export type TelegramConfig = {

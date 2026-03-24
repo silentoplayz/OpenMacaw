@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { LLMProvider, Message, ToolDefinition, StreamDelta } from './provider.js';
+import type { LLMProvider, ChatOptions, Message, ToolDefinition, StreamDelta } from './provider.js';
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 
@@ -105,8 +105,10 @@ export class OllamaProvider implements LLMProvider {
     messages: Message[],
     tools: ToolDefinition[],
     onDelta: (delta: StreamDelta) => void,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | ChatOptions
   ): Promise<{ inputTokens: number; outputTokens: number }> {
+    const signal = signalOrOptions instanceof AbortSignal ? signalOrOptions : signalOrOptions?.signal;
+    const temperature = signalOrOptions instanceof AbortSignal ? undefined : signalOrOptions?.temperature;
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
       if (msg.role === 'tool') {
         // ── Task 2: Tool Role Shim ────────────────────────────────────────
@@ -209,6 +211,7 @@ export class OllamaProvider implements LLMProvider {
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       stream: true,
       ...(useJsonFormat ? { response_format: { type: 'json_object' } } : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
     };
     // ── API Call ──────────────────────────────────────────────────────────────
     let stream: AsyncIterable<any>;

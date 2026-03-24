@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { LLMProvider, Message, ToolDefinition, StreamDelta } from './provider.js';
+import type { LLMProvider, ChatOptions, Message, ToolDefinition, StreamDelta } from './provider.js';
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 
@@ -40,8 +40,10 @@ export class OpenAIProvider implements LLMProvider {
     messages: Message[],
     tools: ToolDefinition[],
     onDelta: (delta: StreamDelta) => void | Promise<void>,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | ChatOptions
   ): Promise<{ inputTokens: number; outputTokens: number }> {
+    const signal = signalOrOptions instanceof AbortSignal ? signalOrOptions : signalOrOptions?.signal;
+    const temperature = signalOrOptions instanceof AbortSignal ? undefined : signalOrOptions?.temperature;
     const openaiMessages = messages.map((msg): OpenAI.Chat.ChatCompletionMessageParam => {
       if (msg.role === 'tool') {
         return {
@@ -96,6 +98,7 @@ export class OpenAIProvider implements LLMProvider {
       messages: openaiMessages,
       tools: openaiTools.length > 0 ? openaiTools as any[] : undefined,
       stream: true,
+      ...(temperature !== undefined ? { temperature } : {}),
     }, { signal });
 
     let inputTokens = 0;

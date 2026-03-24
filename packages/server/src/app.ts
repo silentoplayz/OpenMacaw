@@ -35,6 +35,7 @@ import {
   agenticRoutes,
   authRoutes,
   adminRoutes,
+  skillsRoutes,
 } from './routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -63,7 +64,15 @@ export async function buildApp() {
   const fastify = Fastify({ logger: false });
 
   await fastify.register(cors, {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:4000'],
+    origin: (origin, cb) => {
+      // Allow requests with no Origin (same-origin, non-browser clients)
+      if (!origin) return cb(null, true);
+      // Dev origins
+      const devOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:4000'];
+      if (devOrigins.includes(origin)) return cb(null, true);
+      // In production, allow same-origin (any host serving the app)
+      cb(null, true);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
   });
@@ -92,10 +101,10 @@ export async function buildApp() {
         'Content-Security-Policy',
         "default-src 'self'; " +
         "script-src 'self' 'unsafe-inline'; " +
-        "style-src 'self' 'unsafe-inline'; " +
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
         "img-src 'self' data: blob:; " +
         "connect-src 'self' ws: wss:; " +
-        "font-src 'self' data:"
+        "font-src 'self' data: https://fonts.gstatic.com"
       );
     }
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -146,6 +155,7 @@ export async function buildApp() {
   await fastify.register(agenticRoutes);
   await fastify.register(authRoutes);
   await fastify.register(adminRoutes);
+  await fastify.register(skillsRoutes);
 
   // Serve built frontend
   const frontendPath = join(__dirname, '../../web/dist');

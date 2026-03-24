@@ -2,6 +2,9 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createAgentRuntime, getSession, type AgentEvent } from '../agent/index.js';
 import { getActiveSettingsForUser } from '../config.js';
+import { getDrizzleDb } from '../db/index.js';
+import * as dbSchema from '../db/schema.js';
+import { eq, and, or } from 'drizzle-orm';
 
 const chatSchema = z.discriminatedUnion('type', [
   z.object({
@@ -48,46 +51,63 @@ export function abortSession(sessionId: string): boolean {
 }
 
 // Origins that are allowed to open the WebSocket.
-// Kept in sync with the CORS allow-list in index.ts.
+// Development origins are hardcoded; in production the server also accepts
+// same-origin requests (the Origin matches the Host header).
 const WS_ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3000',
   'http://localhost:4000',
-  // Production: same-origin requests have no Origin header — handled below.
 ]);
 
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/ws/chat', { websocket: true }, async (socket, request) => {
     // ── 1. JWT authentication ────────────────────────────────────────────────
-    // Accept token via Authorization header OR ?token= query param (WS clients
-    // cannot set arbitrary headers in all environments, so both are supported).
+    // Try the Authorization header first, then fall back to the ?token= query
+    // param (browsers cannot set custom headers on WebSocket connections).
+    let jwtOk = false;
     try {
       await request.jwtVerify();
+      jwtOk = true;
     } catch {
-      // Try query param fallback
+      // Header verification failed — try query param.
+    }
+    if (!jwtOk) {
       const queryToken = (request.query as Record<string, string>)?.token;
       if (queryToken) {
         try {
-          await request.jwtVerify({ onlyCookie: false });
-        } catch {
-          socket.close(4001, 'Unauthorized — invalid or missing JWT');
-          return;
+          (request as any).user = fastify.jwt.verify(queryToken);
+          jwtOk = true;
+        } catch (e) {
+          console.error('[WebSocket] JWT query-param verify failed:', e);
         }
-      } else {
-        socket.close(4001, 'Unauthorized — invalid or missing JWT');
-        return;
       }
+    }
+    if (!jwtOk) {
+      console.warn('[WebSocket] Auth failed — no valid token in header or query param');
+      socket.close(4001, 'Unauthorized');
+      return;
     }
 
     // ── 2. Origin validation ─────────────────────────────────────────────────
-    // Browsers always send Origin on cross-origin WS upgrades. A missing Origin
-    // header is only possible for same-origin requests or non-browser clients
-    // (curl, server-to-server) — allow those through.
+    // Allow: no Origin (same-origin / non-browser), hardcoded dev origins, or
+    // an Origin whose host matches the request's Host header (same-origin in
+    // production behind any domain).
     const origin = request.headers.origin;
     if (origin && !WS_ALLOWED_ORIGINS.has(origin)) {
-      socket.close(4003, 'Forbidden — origin not allowed');
-      return;
+      try {
+        const originHost = new URL(origin).host;
+        const requestHost = request.headers.host || request.headers[':authority'];
+        if (originHost !== requestHost) {
+          console.warn(`[WebSocket] Origin rejected — origin="${origin}" host="${requestHost}"`);
+          socket.close(4003, 'Forbidden — origin not allowed');
+          return;
+        }
+      } catch {
+        console.warn(`[WebSocket] Origin rejected (parse error) — origin="${origin}"`);
+        socket.close(4003, 'Forbidden — origin not allowed');
+        return;
+      }
     }
     const authenticatedUserId: string = (request as any).user?.id;
     console.log('[WebSocket] New authenticated connection, userId:', authenticatedUserId);
@@ -138,18 +158,57 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             }
           };
 
+          // ── Slash-command trigger: match /command against skill triggers ──────
+          let resolvedMessage = userMessage;
+          if (userMessage && userMessage.startsWith('/')) {
+            const slashMatch = userMessage.match(/^(\/[a-z0-9_-]+)\s*([\s\S]*)$/i);
+            if (slashMatch) {
+              const trigger = slashMatch[1].toLowerCase();
+              const remainder = slashMatch[2].trim();
+              try {
+                const db = getDrizzleDb();
+                const allSkills = await db.select().from(dbSchema.skills)
+                  .where(
+                    and(
+                      eq(dbSchema.skills.enabled, 1),
+                      or(
+                        eq(dbSchema.skills.userId, session.userId),
+                        eq(dbSchema.skills.isGlobal, 1)
+                      )
+                    )
+                  );
+                const matched = allSkills.find(s => {
+                  try {
+                    const triggers: string[] = JSON.parse(s.triggers || '[]');
+                    return triggers.some(t => t.toLowerCase() === trigger);
+                  } catch { return false; }
+                });
+                if (matched) {
+                  // Prepend skill instructions to the user message
+                  resolvedMessage = `[Skill: ${matched.name}]\n${matched.instructions}\n\n---\nUser request: ${remainder || userMessage}`;
+                  console.log(`[WebSocket] Slash-command ${trigger} matched skill "${matched.name}"`);
+                }
+              } catch (err) {
+                console.warn('[WebSocket] Slash-command skill lookup failed:', err);
+              }
+            }
+          }
+
           try {
             await createAgentRuntime(
               {
                 sessionId,
                 model: model || session.model || config.DEFAULT_MODEL,
                 personality: session.personality || config.PERSONALITY,
+                agentName: config.AGENT_NAME,
+                agentDescription: config.AGENT_DESCRIPTION,
+                temperature: config.TEMPERATURE,
                 mode: mode || session.mode,
                 maxSteps: config.MAX_STEPS,
                 signal: abortCtrl.signal,
               },
               liveEventHandler
-            ).run(userMessage);
+            ).run(resolvedMessage);
           } finally {
             // Always clean up — whether run completed, errored, or was aborted
             sessionAbortControllers.delete(sessionId);
@@ -183,6 +242,9 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
                 sessionId,
                 model: model || session.model || config.DEFAULT_MODEL,
                 personality: session.personality || config.PERSONALITY,
+                agentName: config.AGENT_NAME,
+                agentDescription: config.AGENT_DESCRIPTION,
+                temperature: config.TEMPERATURE,
                 mode: mode || session.mode,
                 maxSteps: config.MAX_STEPS,
                 signal: abortCtrl.signal,

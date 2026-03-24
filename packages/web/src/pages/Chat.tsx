@@ -81,6 +81,34 @@ function waitForSocket(ws: WebSocket | null): Promise<WebSocket> {
   });
 }
 
+// Polls wsRef.current until an OPEN socket appears (handles race between
+// session creation and the useEffect that creates the WebSocket).
+// If the socket dies (CLOSED) mid-poll, it calls `reconnect` to create a
+// fresh one so we don't stall for the full timeout.
+function waitForSocketRef(
+  wsRef: React.MutableRefObject<WebSocket | null>,
+  reconnect: () => WebSocket,
+): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 10_000;
+    const check = setInterval(() => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        clearInterval(check);
+        resolve(ws);
+      } else if (ws && ws.readyState === WebSocket.CLOSED) {
+        // Socket died — create a fresh one immediately instead of waiting.
+        console.warn('[waitForSocketRef] socket CLOSED, reconnecting…');
+        wsRef.current = reconnect();
+      } else if (Date.now() > deadline) {
+        clearInterval(check);
+        const state = ws ? ws.readyState : 'null';
+        reject(new Error(`WebSocket connection timeout (ref polling, state=${state})`));
+      }
+    }, 50);
+  });
+}
+
 
 // ── Collapsible "Denied" card ────────────────────────────────────────────────
 // Collapsed by default to keep the chat feed clean. Click to expand with reason.
@@ -1627,8 +1655,8 @@ export default function Chat() {
       dispatch({ type: 'END_STREAM' });
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket closed');
+    ws.onclose = (ev) => {
+      console.log(`WebSocket closed — code=${ev.code} reason="${ev.reason}"`);
       dispatch({ type: 'END_STREAM' });
     };
 
@@ -1644,7 +1672,8 @@ export default function Chat() {
 
     return () => {
       ws.close();
-      wsRef.current = null;
+      // Don't null the ref — an in-flight waitForSocketRef poll would stall.
+      // The next effect body (or handleSend) will overwrite it with a fresh socket.
     };
   }, [currentSessionId, connectWebSocket]);
 
@@ -1696,17 +1725,13 @@ export default function Chat() {
         };
       });
 
-      // Deterministically wait for the socket to be OPEN — no timeout guesses.
-      // If the existing socket is not open, close it first (prevents orphaned sockets).
-      let ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (ws && ws.readyState !== WebSocket.CLOSED) {
-          ws.close();
-        }
-        ws = connectWebSocket();
-        wsRef.current = ws;
+      // Ensure a socket exists before polling. The useEffect may not have fired
+      // yet (e.g. session was just created and React hasn't re-rendered). If the
+      // effect later replaces this socket, waitForSocketRef picks up the new one.
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocket(ws);
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
     } catch (e: any) {
       console.error('[sendMessage] Failed:', e);
@@ -1751,15 +1776,13 @@ export default function Chat() {
       dispatch({ type: 'START_STREAM' });
       streamStartRef.current = Date.now();
 
-      let ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        ws = connectWebSocket();
-        wsRef.current = ws;
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocket(ws);
-      openWs.send(JSON.stringify({ 
-        type: 'regenerate', 
-        sessionId: currentSessionId 
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
+      openWs.send(JSON.stringify({
+        type: 'regenerate',
+        sessionId: currentSessionId
       }));
     } catch (e) {
       console.error('[Regenerate] Failed:', e);
@@ -1802,17 +1825,10 @@ export default function Chat() {
         };
       });
 
-      // Deterministically wait for the socket to be OPEN — no timeout guesses.
-      // If the existing socket is not open, close it first (prevents orphaned sockets).
-      let ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (ws && ws.readyState !== WebSocket.CLOSED) {
-          ws.close();
-        }
-        ws = connectWebSocket();
-        wsRef.current = ws;
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocket(ws);
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
     } catch (e: any) {
       console.error('[sendQuickAction] Failed:', e);
@@ -1909,7 +1925,7 @@ export default function Chat() {
             )}
           </div>
         )}
-        <div className="flex-1 overflow-y-auto w-full flex flex-col">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col">
           {chatError && (
             <div className="w-full max-w-4xl mx-auto px-4 mt-3">
               <div className="flex items-start gap-3 p-3 bg-rose-950/40 border border-rose-500/30 rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.1)]">
@@ -2103,10 +2119,18 @@ export default function Chat() {
 
                   // Denied — show collapsed DeniedCollapsible (no interactive card)
                   if (status === 'denied') {
+                    // Extract denial reason from the matching tool message
+                    const matchingToolMsg = msg.toolCallId
+                      ? displayMessages.find((m: Message) => m.role === 'tool' && m.toolCallId === msg.toolCallId)
+                      : undefined;
+                    const denyReason = matchingToolMsg?.content
+                      ?.replace(/^Tool call denied:\s*/i, '')
+                      ?.replace(/^The user DENIED.*?\.\s*/i, '')
+                      ?.trim() || '';
                     return (
                       <div key={msg.id} className="w-full text-center my-6">
                         <div className="inline-block w-full max-w-md text-left">
-                          <DeniedCollapsible reason="" />
+                          <DeniedCollapsible reason={denyReason} />
                         </div>
                       </div>
                     );
@@ -2197,7 +2221,7 @@ export default function Chat() {
                               <ToolsUsedHeader tools={toolsForHeader} />
 
                               {cleaned ? (
-                                <div className={`text-sm text-gray-300 gap-4 leading-relaxed prose prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-transparent prose-pre:p-0 ${isStreamingMsg ? 'streaming-cursor' : ''}`}>
+                                <div className={`text-sm text-gray-300 gap-4 leading-relaxed break-words prose prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-transparent prose-pre:p-0 ${isStreamingMsg ? 'streaming-cursor' : ''}`}>
                                   <ReactMarkdown
                                     remarkPlugins={[remarkGfm, remarkMath]}
                                     rehypePlugins={[rehypeKatex]}

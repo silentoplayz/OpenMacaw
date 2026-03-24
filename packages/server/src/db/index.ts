@@ -15,6 +15,8 @@ const TABLE_SQL: Record<string, string> = {
   settings: 'settings',
   pipelines: 'pipelines',
   user_settings: 'user_settings',
+  skills: 'skills',
+  skill_versions: 'skill_versions',
 };
 
 // Primary key column (snake_case) per SQL table name
@@ -29,6 +31,8 @@ const TABLE_PK: Record<string, string> = {
   settings: 'key',
   pipelines: 'id',
   user_settings: 'id',
+  skills: 'id',
+  skill_versions: 'id',
 };
 
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -140,6 +144,7 @@ const SCHEMA_SQL = `
     mode TEXT NOT NULL DEFAULT 'build',
     is_pinned INTEGER NOT NULL DEFAULT 0,
     folder_id TEXT,
+    active_skill_ids TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -200,12 +205,38 @@ const SCHEMA_SQL = `
     updated_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    tool_hints TEXT NOT NULL DEFAULT '[]',
+    triggers TEXT NOT NULL DEFAULT '[]',
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    is_global INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS skill_versions (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    instructions TEXT NOT NULL,
+    changed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    change_note TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_permissions_server ON permissions(server_id);
   CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
   CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
   CREATE INDEX IF NOT EXISTS idx_activity_session ON activity_log(session_id);
   CREATE INDEX IF NOT EXISTS idx_activity_server ON activity_log(server_id);
   CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id);
+  CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id);
 
   CREATE TABLE IF NOT EXISTS user_settings (
     id TEXT PRIMARY KEY,
@@ -376,6 +407,12 @@ export function initDatabase(): void {
     console.log('[DB Migration] Phase 7: parent_id and is_active columns added.');
   } catch (e) { /* columns already exist */ }
 
+  // ── Skills System: per-session skill activation ─────────────────────────────
+  try {
+    sqlite.exec("ALTER TABLE sessions ADD COLUMN active_skill_ids TEXT DEFAULT '[]'");
+    console.log('[DB Migration] Skills: active_skill_ids column added to sessions.');
+  } catch (e) { /* column already exists */ }
+
   drizzleDb = drizzle(sqlite, { schema: schemaMappings });
 
   // Migrate from legacy JSON store on first run
@@ -509,4 +546,6 @@ export const schema = {
   settings: 'settings',
   pipelines: 'pipelines',
   userSettings: 'user_settings',
+  skills: 'skills',
+  skillVersions: 'skill_versions',
 } as const;

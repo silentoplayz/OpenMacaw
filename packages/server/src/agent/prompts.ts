@@ -53,14 +53,58 @@ Once you see "Tool Output" in the conversation, your job is to READ and ANALYZE 
  * the operator can layer stylistic or domain-specific behaviour on top of the
  * base prompt without overriding its safety constraints.
  */
-export function buildSystemPrompt(personality?: string): string {
-  if (!personality || personality.trim() === '') {
-    return FORCEFUL_SYSTEM_PROMPT;
+export interface ActiveSkill {
+  name: string;
+  instructions: string;
+  toolHints?: string[];
+}
+
+export interface AgentIdentity {
+  agentName?: string;
+  agentDescription?: string;
+  personality?: string;
+}
+
+export function buildSystemPrompt(identity?: AgentIdentity | string, skills?: ActiveSkill[]): string {
+  // Support legacy signature: buildSystemPrompt(personality?: string, ...)
+  let agentName = '';
+  let agentDescription = '';
+  let personality = '';
+  if (typeof identity === 'string') {
+    personality = identity;
+  } else if (identity) {
+    agentName = identity.agentName || '';
+    agentDescription = identity.agentDescription || '';
+    personality = identity.personality || '';
   }
 
-  return `${FORCEFUL_SYSTEM_PROMPT}
+  let prompt = FORCEFUL_SYSTEM_PROMPT;
 
-## Personality & Style
+  // Override the default identity when the operator has configured a custom agent name/description
+  if (agentName.trim()) {
+    prompt += `\n\n## Agent Identity\n\nYour name is **${agentName.trim()}**. Use this name when referring to yourself instead of "OpenMacaw" or "The Guardian."`;
+    if (agentDescription.trim()) {
+      prompt += ` ${agentDescription.trim()}`;
+    }
+  } else if (agentDescription.trim()) {
+    prompt += `\n\n## Agent Description\n\n${agentDescription.trim()}`;
+  }
 
-${personality.trim()}`;
+  if (personality && personality.trim() !== '') {
+    prompt += `\n\n## Personality & Style\n\n${personality.trim()}`;
+  }
+
+  if (skills && skills.length > 0) {
+    prompt += '\n\n---\n\n## Active Skills\n\nThe following skills are active for this session. Follow their instructions when relevant.\n';
+
+    for (const skill of skills) {
+      prompt += `\n### Skill: ${skill.name}\n\n${skill.instructions.trim()}`;
+      if (skill.toolHints && skill.toolHints.length > 0) {
+        prompt += `\n\n> **Suggested tools for this skill:** ${skill.toolHints.join(', ')}`;
+      }
+      prompt += '\n';
+    }
+  }
+
+  return prompt;
 }
