@@ -63,17 +63,29 @@ const WS_ALLOWED_ORIGINS = new Set([
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/ws/chat', { websocket: true }, async (socket, request) => {
     // ── 1. JWT authentication ────────────────────────────────────────────────
-    // Accept token via Authorization header OR ?token= query param (WS clients
-    // cannot set custom headers, so the query param is the primary path).
-    const queryToken = (request.query as Record<string, string>)?.token;
-    if (queryToken && !request.headers.authorization) {
-      // Inject the query-param token as a Bearer header so jwtVerify() picks it up.
-      request.headers.authorization = `Bearer ${queryToken}`;
-    }
+    // Try the Authorization header first, then fall back to the ?token= query
+    // param (browsers cannot set custom headers on WebSocket connections).
+    let jwtOk = false;
     try {
       await request.jwtVerify();
+      jwtOk = true;
     } catch {
-      socket.close(4001, 'Unauthorized — invalid or missing JWT');
+      // Header verification failed — try query param.
+    }
+    if (!jwtOk) {
+      const queryToken = (request.query as Record<string, string>)?.token;
+      if (queryToken) {
+        try {
+          (request as any).user = fastify.jwt.verify(queryToken);
+          jwtOk = true;
+        } catch (e) {
+          console.error('[WebSocket] JWT query-param verify failed:', e);
+        }
+      }
+    }
+    if (!jwtOk) {
+      console.warn('[WebSocket] Auth failed — no valid token in header or query param');
+      socket.close(4001, 'Unauthorized');
       return;
     }
 
@@ -87,10 +99,12 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         const originHost = new URL(origin).host;
         const requestHost = request.headers.host || request.headers[':authority'];
         if (originHost !== requestHost) {
+          console.warn(`[WebSocket] Origin rejected — origin="${origin}" host="${requestHost}"`);
           socket.close(4003, 'Forbidden — origin not allowed');
           return;
         }
       } catch {
+        console.warn(`[WebSocket] Origin rejected (parse error) — origin="${origin}"`);
         socket.close(4003, 'Forbidden — origin not allowed');
         return;
       }
