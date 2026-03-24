@@ -64,23 +64,17 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/ws/chat', { websocket: true }, async (socket, request) => {
     // ── 1. JWT authentication ────────────────────────────────────────────────
     // Accept token via Authorization header OR ?token= query param (WS clients
-    // cannot set arbitrary headers in all environments, so both are supported).
+    // cannot set custom headers, so the query param is the primary path).
+    const queryToken = (request.query as Record<string, string>)?.token;
+    if (queryToken && !request.headers.authorization) {
+      // Inject the query-param token as a Bearer header so jwtVerify() picks it up.
+      request.headers.authorization = `Bearer ${queryToken}`;
+    }
     try {
       await request.jwtVerify();
     } catch {
-      // Try query param fallback
-      const queryToken = (request.query as Record<string, string>)?.token;
-      if (queryToken) {
-        try {
-          await request.jwtVerify({ onlyCookie: false });
-        } catch {
-          socket.close(4001, 'Unauthorized — invalid or missing JWT');
-          return;
-        }
-      } else {
-        socket.close(4001, 'Unauthorized — invalid or missing JWT');
-        return;
-      }
+      socket.close(4001, 'Unauthorized — invalid or missing JWT');
+      return;
     }
 
     // ── 2. Origin validation ─────────────────────────────────────────────────

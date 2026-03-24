@@ -42,10 +42,20 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
 export function getWsUrl(endpoint: string) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
+  let base: string;
   if (import.meta.env.VITE_API_URL) {
     const url = new URL(import.meta.env.VITE_API_URL);
-    return `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    base = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  } else {
+    base = `${protocol}//${window.location.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   }
 
-  return `${protocol}//${window.location.host}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  // WebSocket API doesn't support custom headers — pass the JWT via query
+  // param so the server's ?token= fallback can authenticate the connection.
+  const token = localStorage.getItem('openmacaw_token');
+  if (token) {
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}token=${encodeURIComponent(token)}`;
+  }
+  return base;
 }
