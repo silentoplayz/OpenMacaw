@@ -83,17 +83,27 @@ function waitForSocket(ws: WebSocket | null): Promise<WebSocket> {
 
 // Polls wsRef.current until an OPEN socket appears (handles race between
 // session creation and the useEffect that creates the WebSocket).
-function waitForSocketRef(wsRef: React.MutableRefObject<WebSocket | null>): Promise<WebSocket> {
+// If the socket dies (CLOSED) mid-poll, it calls `reconnect` to create a
+// fresh one so we don't stall for the full timeout.
+function waitForSocketRef(
+  wsRef: React.MutableRefObject<WebSocket | null>,
+  reconnect: () => WebSocket,
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 10_000;
     const check = setInterval(() => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         clearInterval(check);
         resolve(ws);
+      } else if (ws && ws.readyState === WebSocket.CLOSED) {
+        // Socket died — create a fresh one immediately instead of waiting.
+        console.warn('[waitForSocketRef] socket CLOSED, reconnecting…');
+        wsRef.current = reconnect();
       } else if (Date.now() > deadline) {
         clearInterval(check);
-        reject(new Error('WebSocket connection timeout (ref polling)'));
+        const state = ws ? ws.readyState : 'null';
+        reject(new Error(`WebSocket connection timeout (ref polling, state=${state})`));
       }
     }, 50);
   });
@@ -1645,8 +1655,8 @@ export default function Chat() {
       dispatch({ type: 'END_STREAM' });
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket closed');
+    ws.onclose = (ev) => {
+      console.log(`WebSocket closed — code=${ev.code} reason="${ev.reason}"`);
       dispatch({ type: 'END_STREAM' });
     };
 
@@ -1662,7 +1672,8 @@ export default function Chat() {
 
     return () => {
       ws.close();
-      wsRef.current = null;
+      // Don't null the ref — an in-flight waitForSocketRef poll would stall.
+      // The next effect body (or handleSend) will overwrite it with a fresh socket.
     };
   }, [currentSessionId, connectWebSocket]);
 
@@ -1720,7 +1731,7 @@ export default function Chat() {
       if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
         wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocketRef(wsRef);
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
     } catch (e: any) {
       console.error('[sendMessage] Failed:', e);
@@ -1768,7 +1779,7 @@ export default function Chat() {
       if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
         wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocketRef(wsRef);
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
       openWs.send(JSON.stringify({
         type: 'regenerate',
         sessionId: currentSessionId
@@ -1817,7 +1828,7 @@ export default function Chat() {
       if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
         wsRef.current = connectWebSocket();
       }
-      const openWs = await waitForSocketRef(wsRef);
+      const openWs = await waitForSocketRef(wsRef, connectWebSocket);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
     } catch (e: any) {
       console.error('[sendQuickAction] Failed:', e);
