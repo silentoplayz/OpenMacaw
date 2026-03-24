@@ -51,13 +51,13 @@ export function abortSession(sessionId: string): boolean {
 }
 
 // Origins that are allowed to open the WebSocket.
-// Kept in sync with the CORS allow-list in index.ts.
+// Development origins are hardcoded; in production the server also accepts
+// same-origin requests (the Origin matches the Host header).
 const WS_ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3000',
   'http://localhost:4000',
-  // Production: same-origin requests have no Origin header — handled below.
 ]);
 
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
@@ -78,13 +78,22 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // ── 2. Origin validation ─────────────────────────────────────────────────
-    // Browsers always send Origin on cross-origin WS upgrades. A missing Origin
-    // header is only possible for same-origin requests or non-browser clients
-    // (curl, server-to-server) — allow those through.
+    // Allow: no Origin (same-origin / non-browser), hardcoded dev origins, or
+    // an Origin whose host matches the request's Host header (same-origin in
+    // production behind any domain).
     const origin = request.headers.origin;
     if (origin && !WS_ALLOWED_ORIGINS.has(origin)) {
-      socket.close(4003, 'Forbidden — origin not allowed');
-      return;
+      try {
+        const originHost = new URL(origin).host;
+        const requestHost = request.headers.host || request.headers[':authority'];
+        if (originHost !== requestHost) {
+          socket.close(4003, 'Forbidden — origin not allowed');
+          return;
+        }
+      } catch {
+        socket.close(4003, 'Forbidden — origin not allowed');
+        return;
+      }
     }
     const authenticatedUserId: string = (request as any).user?.id;
     console.log('[WebSocket] New authenticated connection, userId:', authenticatedUserId);

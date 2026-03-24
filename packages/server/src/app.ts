@@ -64,7 +64,15 @@ export async function buildApp() {
   const fastify = Fastify({ logger: false });
 
   await fastify.register(cors, {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:4000'],
+    origin: (origin, cb) => {
+      // Allow requests with no Origin (same-origin, non-browser clients)
+      if (!origin) return cb(null, true);
+      // Dev origins
+      const devOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:4000'];
+      if (devOrigins.includes(origin)) return cb(null, true);
+      // In production, allow same-origin (any host serving the app)
+      cb(null, true);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
   });
