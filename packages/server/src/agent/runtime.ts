@@ -301,7 +301,7 @@ export class AgentRuntime {
 
       // Stop loop if we intercepted a tool proposal (Human-in-the-Loop breakpoint)
       if (interceptedProposal) {
-        console.log('[Agent] Execution halted for human approval (proposal intercepted).');
+        console.log(`[Agent] [session:${this.config.sessionId}] Execution halted for human approval (proposal intercepted).`);
         break;
       }
 
@@ -383,7 +383,7 @@ export class AgentRuntime {
 
       if (this.toolCallTimestamps.length > this.RATE_LIMIT_MAX_CALLS) {
         console.error(
-          `[Agent] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
+          `[Agent] [session:${this.config.sessionId}] Safety Brake triggered: ${this.toolCallTimestamps.length} tool calls in ${this.RATE_LIMIT_WINDOW_MS / 1000}s. Halting run.`
         );
         this.eventHandler({
           type: 'error',
@@ -394,7 +394,7 @@ export class AgentRuntime {
     }
 
     let { serverId, toolName } = extractServerIdFromToolName(toolCall.name);
-    console.log('[Agent] Tool call (raw):', toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
+    console.log(`[Agent] [session:${this.config.sessionId}] Tool call (raw):`, toolCall.name, '→ serverId:', serverId, 'toolName:', toolName);
 
     // ── Task 1: Tool-to-Server Lookup ─────────────────────────────────────
     // If the LLM output a bare tool name (no server prefix), resolve it via
@@ -421,7 +421,7 @@ export class AgentRuntime {
     this.stepCount++;
     this.eventHandler({ type: 'step_count', count: this.stepCount });
 
-    console.log('[Agent] Tool call start:', toolName, 'input:', JSON.stringify(toolCall.input).substring(0, 100));
+    console.log(`[Agent] [session:${this.config.sessionId}] Tool call start:`, toolName, 'input:', JSON.stringify(toolCall.input).substring(0, 100));
     this.eventHandler({
       type: 'tool_call_start',
       tool: toolName,
@@ -437,7 +437,7 @@ export class AgentRuntime {
 
     // ── Three-verdict routing ─────────────────────────────────────────────────
     if (permResult.verdict === 'DENY') {
-      console.log('[Agent] DENIED by permission guard:', permResult.reason);
+      console.log(`[Agent] [session:${this.config.sessionId}] DENIED by permission guard:`, permResult.reason);
       this.eventHandler({
         type: 'tool_call_result',
         outcome: 'denied',
@@ -478,7 +478,7 @@ export class AgentRuntime {
 
     // ── ALLOW_SILENT: trusted zone — run immediately, no human pause ──────────
     if (permResult.verdict === 'ALLOW_SILENT') {
-      console.log('[Agent] ALLOW_SILENT: Trusted zone hit for', toolName);
+      console.log(`[Agent] [session:${this.config.sessionId}] ALLOW_SILENT: Trusted zone hit for`, toolName);
       return await this.executeToolDirectly(toolCall, serverId, toolName, precedingText, true);
     }
 
@@ -628,7 +628,7 @@ export class AgentRuntime {
       }
       const safeResultStr = secretScan.found ? secretScan.redacted : resultStr;
 
-      console.log('[Agent] Auto-execute OK:', toolName, 'latency:', latency, 'ms');
+      console.log(`[Agent] [session:${this.config.sessionId}] Auto-execute OK:`, toolName, 'latency:', latency, 'ms');
       this.eventHandler({ type: 'tool_call_result', outcome: 'allowed', result });
       await this.logActivity(serverId, toolName, toolCall.input, silent ? 'auto_approved' : 'allowed', undefined, latency);
 
@@ -670,7 +670,7 @@ export class AgentRuntime {
     parentId?: string | null,
     isActive = 1
   ): Promise<string> {
-    console.log('[Agent] Saving message:', role, 'content length:', content.length);
+    console.log(`[Agent] [session:${this.config.sessionId}] Saving message:`, role, 'content length:', content.length);
     const db = getDrizzleDb();
     const messageId = nanoid();
     const pid = parentId === undefined ? this.lastMessageId : parentId;
@@ -691,7 +691,7 @@ export class AgentRuntime {
         outputTokens: usage?.outputTokens,
         createdAt: new Date(),
       });
-      console.log(`[Agent] Message saved: ${messageId} (parent: ${pid})`);
+      console.log(`[Agent] [session:${this.config.sessionId}] Message saved: ${messageId} (parent: ${pid})`);
       this.lastMessageId = messageId;
       return messageId;
     } catch (e) {

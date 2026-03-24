@@ -106,6 +106,26 @@ export class DiscordPipeline {
     this.record = record;
   }
 
+  // ── Live config reload ───────────────────────────────────────────────────
+
+  /** Re-read the pipeline config from DB so changes take effect without restart. */
+  private reloadConfig(): void {
+    const db = getDb();
+    const rows = db
+      .select(schema.pipelines as 'pipelines')
+      .where((col: (k: string) => unknown) => col('id') === this.record.id)
+      .all() as Record<string, unknown>[];
+    if (rows.length > 0) {
+      const row = rows[0];
+      this.record = {
+        ...this.record,
+        config: typeof row.config === 'string'
+          ? JSON.parse(row.config as string)
+          : row.config as any,
+      };
+    }
+  }
+
   // ── Context-based session resolution ──────────────────────────────────────
 
   /**
@@ -135,7 +155,8 @@ export class DiscordPipeline {
     const session = createSession({ title: `${this.record.name} — ${label}` });
     this.contextSessions.set(contextKey, session.id);
     console.log(
-      `[Discord Pipeline: ${this.record.name}] Created session ${session.id} for context ${contextKey}`,
+      `[Discord Pipeline: ${this.record.name}] Created session ${session.id} for context ${contextKey}` +
+      (session.personality ? ` (personality: ${session.personality.substring(0, 60)}…)` : ' (no personality)'),
     );
     return session.id;
   }
@@ -210,7 +231,8 @@ export class DiscordPipeline {
 
         // Branch 3: slash commands.
         if (interaction.isChatInputCommand()) {
-          // Enforce channel binding for slash commands too.
+          // Re-read config from DB so changes take effect without restart.
+          this.reloadConfig();
           const slashCfg = this.record.config as DiscordConfig;
           if (slashCfg.channelId && interaction.channelId !== slashCfg.channelId) {
             await interaction.reply({ content: 'This command is restricted to a different channel.', ephemeral: true });
@@ -243,22 +265,26 @@ export class DiscordPipeline {
     this.client.on('messageCreate', (message: Message) => {
       if (message.author.bot) return;
 
-      // Read config live so updates (after restart) are always honoured.
+      // Re-read the pipeline config from DB so changes (e.g. channelId
+      // removal) take effect without a restart.
+      this.reloadConfig();
       const liveCfg = this.record.config as DiscordConfig;
 
       // Channel binding — skip messages outside the configured channel.
       if (liveCfg.channelId && message.channelId !== liveCfg.channelId) return;
 
       // Mention-only mode (default: true) — only respond when @mentioned.
+      // DMs always bypass this check: the user is messaging the bot directly.
+      const isDM = !message.guildId;
       const mentionOnly = liveCfg.mentionOnly !== false; // undefined → true
-      if (mentionOnly) {
+      if (mentionOnly && !isDM) {
         const botId = this.client?.user?.id;
         if (!botId || !message.mentions.has(botId)) return;
       }
 
       // Strip the bot's own @mention from the message so the LLM sees clean text.
       let content = message.content;
-      if (mentionOnly && this.client?.user?.id) {
+      if (mentionOnly && !isDM && this.client?.user?.id) {
         content = content.replace(new RegExp(`<@!?${this.client.user.id}>`, 'g'), '').trim();
       } else {
         content = content.trim();
@@ -350,7 +376,7 @@ export class DiscordPipeline {
     contextKey?: string,
   ): Promise<void> {
     console.log(
-      `[Discord Pipeline: ${pipelineName}] Message from ${message.author.tag}: ${content.substring(0, 80)}`,
+      `[Discord Pipeline: ${pipelineName}] [${contextKey ?? 'unknown'}] [session:${sessionId}] Message from ${message.author.tag}: ${content.substring(0, 80)}`,
     );
 
     // ── Typing indicator ──────────────────────────────────────────────────────
@@ -502,7 +528,7 @@ export class DiscordPipeline {
     const sessionId = this.resolveSessionForContext(ctxKey);
 
     console.log(
-      `[Discord Pipeline: ${pipelineName}] /agent from ${interaction.user.tag}: ${goal.substring(0, 80)}`,
+      `[Discord Pipeline: ${pipelineName}] [${ctxKey}] [session:${sessionId}] /agent from ${interaction.user.tag}: ${goal.substring(0, 80)}`,
     );
 
     // ── Typing indicator controller ───────────────────────────────────────────
@@ -789,7 +815,7 @@ export class DiscordPipeline {
       );
 
       console.log(
-        `[Discord Pipeline: ${pipelineName}] /clear — wiped messages for session ${sessionId}`,
+        `[Discord Pipeline: ${pipelineName}] [${ctxKey}] /clear — wiped messages for session ${sessionId}`,
       );
 
       await interaction.editReply('✅ Conversation history cleared.');
