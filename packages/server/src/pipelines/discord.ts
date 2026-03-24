@@ -150,9 +150,11 @@ export class DiscordPipeline {
     }
 
     // Determine a human-friendly title for the new session.
+    // Pass personality as empty string so the runner always reads the current
+    // global PERSONALITY at runtime (rather than baking in a stale snapshot).
     const [kind, id] = contextKey.split(':', 2);
     const label = kind === 'guild' ? `Server ${id}` : `DM ${id}`;
-    const session = createSession({ title: `${this.record.name} — ${label}` });
+    const session = createSession({ title: `${this.record.name} — ${label}`, personality: '' });
     this.contextSessions.set(contextKey, session.id);
     console.log(
       `[Discord Pipeline: ${this.record.name}] Created session ${session.id} for context ${contextKey}` +
@@ -397,7 +399,7 @@ export class DiscordPipeline {
     const sessionRecoveryFn = async (): Promise<string | null> => {
       try {
         const ck = contextKey ?? DiscordPipeline.contextKey(message);
-        const newSession = createSession({ title: `${pipelineName} — ${ck}` });
+        const newSession = createSession({ title: `${pipelineName} — ${ck}`, personality: '' });
         this.contextSessions.set(ck, newSession.id);
         console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id} for context ${ck}`);
         return newSession.id;
@@ -565,7 +567,7 @@ export class DiscordPipeline {
     // ── Session recovery ──────────────────────────────────────────────────────
     const sessionRecoveryFn = async (): Promise<string | null> => {
       try {
-        const newSession = createSession({ title: `${pipelineName} — ${ctxKey}` });
+        const newSession = createSession({ title: `${pipelineName} — ${ctxKey}`, personality: '' });
         this.contextSessions.set(ctxKey, newSession.id);
         console.log(`[Discord Pipeline: ${pipelineName}] Recreated session ${newSession.id} for context ${ctxKey}`);
         return newSession.id;
