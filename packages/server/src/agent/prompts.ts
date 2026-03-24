@@ -59,8 +59,36 @@ export interface ActiveSkill {
   toolHints?: string[];
 }
 
-export function buildSystemPrompt(personality?: string, skills?: ActiveSkill[]): string {
+export interface AgentIdentity {
+  agentName?: string;
+  agentDescription?: string;
+  personality?: string;
+}
+
+export function buildSystemPrompt(identity?: AgentIdentity | string, skills?: ActiveSkill[]): string {
+  // Support legacy signature: buildSystemPrompt(personality?: string, ...)
+  let agentName = '';
+  let agentDescription = '';
+  let personality = '';
+  if (typeof identity === 'string') {
+    personality = identity;
+  } else if (identity) {
+    agentName = identity.agentName || '';
+    agentDescription = identity.agentDescription || '';
+    personality = identity.personality || '';
+  }
+
   let prompt = FORCEFUL_SYSTEM_PROMPT;
+
+  // Override the default identity when the operator has configured a custom agent name/description
+  if (agentName.trim()) {
+    prompt += `\n\n## Agent Identity\n\nYour name is **${agentName.trim()}**. Use this name when referring to yourself instead of "OpenMacaw" or "The Guardian."`;
+    if (agentDescription.trim()) {
+      prompt += ` ${agentDescription.trim()}`;
+    }
+  } else if (agentDescription.trim()) {
+    prompt += `\n\n## Agent Description\n\n${agentDescription.trim()}`;
+  }
 
   if (personality && personality.trim() !== '') {
     prompt += `\n\n## Personality & Style\n\n${personality.trim()}`;

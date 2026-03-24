@@ -22,6 +22,12 @@ export interface AgentConfig {
    * system prompt via `buildSystemPrompt()` — never replaces it.
    */
   personality?: string;
+  /** Custom agent name from workspace settings. Overrides the default "OpenMacaw" identity. */
+  agentName?: string;
+  /** Custom agent description from workspace settings. */
+  agentDescription?: string;
+  /** LLM sampling temperature. */
+  temperature?: number;
   mode: AgentMode;
   maxSteps: number;
   /**
@@ -164,8 +170,14 @@ export class AgentRuntime {
     // Load active skills for system prompt injection
     const activeSkills = await this.loadActiveSkills();
 
+    const identity = {
+      agentName: this.config.agentName,
+      agentDescription: this.config.agentDescription,
+      personality: this.config.personality,
+    };
+
     if (history.length === 0) {
-      this.messages = [{ role: 'system', content: buildSystemPrompt(this.config.personality, activeSkills) }];
+      this.messages = [{ role: 'system', content: buildSystemPrompt(identity, activeSkills) }];
       return;
     }
 
@@ -199,7 +211,7 @@ export class AgentRuntime {
 
     // Ensure system prompt is at the top (always present — even with no personality).
     if (this.messages.length === 0 || this.messages[0].role !== 'system') {
-      this.messages.unshift({ role: 'system', content: buildSystemPrompt(this.config.personality, activeSkills) });
+      this.messages.unshift({ role: 'system', content: buildSystemPrompt(identity, activeSkills) });
     } else {
       // Set lastMessageId from the last message of the loaded history
       const lastMsg = activeHistory[activeHistory.length - 1];
@@ -279,7 +291,7 @@ export class AgentRuntime {
               this.eventHandler({ type: 'error', message: delta.error || 'Unknown error' });
             }
           },
-          abortController.signal
+          { signal: abortController.signal, temperature: this.config.temperature }
         );
       } catch (e: any) {
         if (e.name === 'AbortError') {

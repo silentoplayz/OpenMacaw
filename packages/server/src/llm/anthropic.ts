@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { LLMProvider, Message, ToolDefinition, StreamDelta } from './provider.js';
+import type { LLMProvider, ChatOptions, Message, ToolDefinition, StreamDelta } from './provider.js';
 import { getConfig } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 
@@ -42,8 +42,10 @@ export class AnthropicProvider implements LLMProvider {
     messages: Message[],
     tools: ToolDefinition[],
     onDelta: (delta: StreamDelta) => void | Promise<void>,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | ChatOptions
   ): Promise<{ inputTokens: number; outputTokens: number }> {
+    const signal = signalOrOptions instanceof AbortSignal ? signalOrOptions : signalOrOptions?.signal;
+    const temperature = signalOrOptions instanceof AbortSignal ? undefined : signalOrOptions?.temperature;
     const systemMessage = messages.find(m => m.role === 'system');
     const nonSystemMessages = messages.filter(m => m.role !== 'system');
 
@@ -132,6 +134,7 @@ export class AnthropicProvider implements LLMProvider {
       system: systemMessage?.content,
       messages: anthropicMessages,
       tools: toolUse.length > 0 ? toolUse : undefined,
+      ...(temperature !== undefined ? { temperature } : {}),
     }, { signal });
 
     let currentToolCall: { id: string; name: string; input: Record<string, unknown> } | null = null;

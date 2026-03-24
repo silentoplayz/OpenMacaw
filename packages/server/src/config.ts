@@ -23,6 +23,17 @@ const configSchema = z.object({
   TEMPERATURE: z.coerce.number().default(1.0),
 
   /**
+   * Optional agent display name shown in the system prompt.
+   * Replaces the default "OpenMacaw" identity when set.
+   */
+  AGENT_NAME: z.string().default(''),
+
+  /**
+   * Optional agent description injected into the system prompt.
+   */
+  AGENT_DESCRIPTION: z.string().default(''),
+
+  /**
    * Optional personality/style instructions supplied by the operator.
    * These are appended to the immutable base system prompt (`FORCEFUL_SYSTEM_PROMPT`)
    * and never replace it.  Store via PUT /api/settings/PERSONALITY.

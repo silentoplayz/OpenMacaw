@@ -27,6 +27,11 @@ export interface StreamDelta {
   error?: string;
 }
 
+export interface ChatOptions {
+  signal?: AbortSignal;
+  temperature?: number;
+}
+
 export interface LLMProvider {
   name: string;
   models: string[];
@@ -40,7 +45,7 @@ export interface LLMProvider {
     // processes the next content block. For text_delta / message_end the
     // return value is ignored and void is fine.
     onDelta: (delta: StreamDelta) => void | Promise<void>,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | ChatOptions
   ): Promise<{ inputTokens: number; outputTokens: number }>;
 }
 
