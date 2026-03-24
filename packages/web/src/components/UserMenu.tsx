@@ -61,7 +61,7 @@ export function UserMenu({ user, isSidebarOpen, logout, setMobileNavOpen }: User
             {user?.name?.charAt(0) || user?.email?.charAt(0) || 'U'}
           </span>
         </div>
-        <div className={`flex-1 min-w-0 text-left transition-opacity duration-300 ${!isSidebarOpen && 'hidden lg:block lg:opacity-0 lg:w-0 lg:overflow-hidden'}`}>
+        <div className={`flex-1 min-w-0 text-left transition-opacity duration-300 ${!isSidebarOpen && 'hidden md:block md:opacity-0 md:w-0 md:overflow-hidden'}`}>
           <p className="text-[13px] font-medium text-gray-200 truncate whitespace-nowrap">{user?.name || user?.email || 'User'}</p>
           <p className="text-[10px] font-mono text-cyan-400 truncate whitespace-nowrap capitalize">{user?.role || 'user'}</p>
         </div>
