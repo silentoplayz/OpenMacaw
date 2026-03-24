@@ -1714,17 +1714,19 @@ export default function Chat() {
         };
       });
 
-      // Always poll wsRef.current rather than a specific socket instance.
-      // The useEffect lifecycle (or React strict mode) can close the current
-      // socket and replace it with a new one at any time. Polling the ref
-      // ensures we pick up whichever socket is alive and OPEN.
+      // Ensure a socket exists before polling. The useEffect may not have fired
+      // yet (e.g. session was just created and React hasn't re-rendered). If the
+      // effect later replaces this socket, waitForSocketRef picks up the new one.
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
+      }
       const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: msg }));
     } catch (e: any) {
       console.error('[sendMessage] Failed:', e);
       dispatch({ type: 'SET_ERROR', message: e.message || 'Failed to send message' });
     }
-  }, [input, isStreaming, currentSessionId, queryClient]);
+  }, [input, isStreaming, currentSessionId, queryClient, connectWebSocket]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1763,6 +1765,9 @@ export default function Chat() {
       dispatch({ type: 'START_STREAM' });
       streamStartRef.current = Date.now();
 
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
+      }
       const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({
         type: 'regenerate',
@@ -1809,6 +1814,9 @@ export default function Chat() {
         };
       });
 
+      if (!wsRef.current || wsRef.current.readyState >= WebSocket.CLOSING) {
+        wsRef.current = connectWebSocket();
+      }
       const openWs = await waitForSocketRef(wsRef);
       openWs.send(JSON.stringify({ type: 'chat', sessionId: sid, message: prompt }));
     } catch (e: any) {
